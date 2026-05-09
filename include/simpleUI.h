@@ -1,5 +1,9 @@
 #pragma once
-#include "raylib.h"
+#define STB_IMAGE_WRITE_IMPLEMENTATION
+#define _CRT_SECURE_NO_WARNINGS
+#include "stb_image_write.h"
+#include <raylib.h>
+#include "apiUTILS.h"
 #include <iostream>
 #include <vector>
 #include <cmath>
@@ -8,9 +12,21 @@
 #include <unordered_map>
 #include <tuple>
 #include <algorithm>
-#include "apiUTILS.h"
 #include <cstdint>
-#include <GLFW/glfw3.h>
+
+std::unordered_map<std::string, Shader> Shaders;
+
+void loadNewShader(const std::string& name, const std::string& vs, const std::string& fs) {
+	Shaders.emplace(name, LoadShader(vs.c_str(), fs.c_str()));
+}
+
+Shader getShader(const std::string& name) {
+	auto it = Shaders.find(name);
+	if (it == Shaders.end()) {
+		exit(99);
+	}
+	return it->second;
+}
 
 Vector2 GetMouseScreenPosition() {
 	return { GetMouseScreenPositionX(), GetMouseScreenPositionY() };
@@ -446,7 +462,7 @@ public:
 		callbackChildRemoved = callback;
 	}
 
-	Instance* findChild(std::string name) {
+	Instance* findChild(const std::string& name) {
 		for (auto obj : Children) {
 			if (obj->Name == name) {
 				return obj;
@@ -486,6 +502,66 @@ public:
 		}
 
 		return nullptr;
+	}
+
+	Instance* findFirstDescendantOfClass(InstanceType cls) {
+		std::function<Instance*(Instance*)> l = [=](Instance* ptr) -> Instance* {
+			for (Instance* child : ptr->Children) {
+				if (child->Class == cls) {
+					return child;
+				}
+
+				Instance* res = l(child);
+
+				if (res) {
+					return res;
+				}
+			}
+
+			return nullptr;
+		};
+
+		return l(this);
+	}
+
+	Instance* findFirstDescendant(const std::string& name) {
+		std::function<Instance* (Instance*)> l;
+
+		l = [&](Instance* ptr) -> Instance* {
+			for (Instance* child : ptr->Children) {
+				if (child->Name == name) {
+					return child;
+				}
+
+				Instance* res = l(child);
+
+				if (res) {
+					return res;
+				}
+			}
+
+			return nullptr;
+			};
+
+		return l(this);
+	}
+
+	std::vector<Instance*> getDescendants(const std::function<bool(Instance*)>& condition = [](Instance* _)  { return true; }) {
+		std::vector<Instance*> out;
+
+		std::function<void(Instance*)> l = [&](Instance* ptr) {
+			for (Instance* child : ptr->Children) {
+				if (condition(child)) {
+					out.push_back(child);
+				}
+
+				l(child);
+			}
+		};
+
+		l(this);
+
+		return out;
 	}
 
 	void deleteAllChildren() {
@@ -1141,9 +1217,11 @@ public:
 		if (Direction != 'X' and Direction != 'Y' and Direction != 'B') {
 			Direction = 'Y';
 		}
+
 		getRealObject2Dsize();
 		getRealObject2Dposition();
 		eventHandler();
+
 		if (updateChildrenZIndex) {
 			updateChildren(this);
 		}
@@ -1894,40 +1972,44 @@ class ImageLabel : public Object2D {
 
 	void updateTexture() {
 		if (tex.id == 0 or lastId != tex.id) {
+			if (tex.id != 0) {
+				UnloadTexture(tex);
+			}
+
 			tex = LoadTextureFromImage(image);
 			lastId = tex.id;
 			GenTextureMipmaps(&tex);
 			SetTextureFilter(tex, TEXTURE_FILTER_TRILINEAR);
 		}
 	}
-	bool imageLoaded = false;
 public:
 	Image image{};
 	ImageOverlayFormat Overlay = FIT;
 	float ImageTransparency = 0.0f;
 	Color ImageColor = { 255,255,255,255 };
+	bool RoundImage = false;
 
 	void setImage(std::string way = "") {
 		if (way == "" or way == "\n") {
 			imageOwner = false;
-			if (imageLoaded) UnloadImage(image);
+			if (imageOwner and image.data) UnloadImage(image);
 			if (tex.id != 0) {
 				UnloadTexture(tex);
-				imageLoaded = false;
+				imageOwner = false;
 			}
 			return;
 		}
+
+		if (imageOwner and image.data) UnloadImage(image);
 		imageOwner = true;
-		if (imageLoaded) UnloadImage(image);
 		image = LoadImage(way.c_str());
 		if (tex.id != 0) {
 			UnloadTexture(tex);
-			imageLoaded = true;
 		}
 	}
 
 	void setImage(Image texture) {
-		if (imageLoaded and imageOwner) UnloadImage(image);
+		if (imageOwner and image.data) UnloadImage(image);
 		imageOwner = false;
 		image = texture;
 		if (tex.id != 0) {
@@ -1978,8 +2060,42 @@ public:
 				}
 			}
 
-			DrawTexturePro(tex, srcRec, destRec, { 0,0 }, 0.0f, { ImageColor.r, ImageColor.g, ImageColor.b, (unsigned char)(ImageColor.a * (1 - ImageTransparency)) });
+			if (Roundness and RoundImage) {
+				static bool roundShaderLoaded = false;
+				static Shader shader;
+				static float lastRoundness = 0;
+				if (!roundShaderLoaded) {
+					shader = getShader("TextureRoundness");
+					roundShaderLoaded = true;
+				}
+
+				if (Roundness != lastRoundness) {
+					lastRoundness = Roundness;
+					SetShaderValue(shader, GetShaderLocation(shader, "roundness"), &Roundness, SHADER_UNIFORM_FLOAT);
+				}
+				
+				BeginShaderMode(shader);
+				DrawTexturePro(tex, srcRec, destRec, { 0,0 }, 0.0f, { ImageColor.r, ImageColor.g, ImageColor.b, (unsigned char)(ImageColor.a * (1 - ImageTransparency)) });
+				EndShaderMode();
+			} else {
+				DrawTexturePro(tex, srcRec, destRec, { 0,0 }, 0.0f, { ImageColor.r, ImageColor.g, ImageColor.b, (unsigned char)(ImageColor.a * (1 - ImageTransparency)) });
+			}
 		}
+	}
+
+	void UpdateWithType(const std::string& type, std::vector<unsigned char>& data) {
+		if (imageOwner and image.data) UnloadImage(image);
+		
+		image = LoadImageFromMemory(type.c_str(), data.data(), data.size());
+
+		if (image.data == nullptr) return;
+		if (tex.id != 0 and imageOwner) UnloadTexture(tex);
+
+		imageOwner = true;
+		tex = LoadTextureFromImage(image);
+		GenTextureMipmaps(&tex);
+		SetTextureFilter(tex, TEXTURE_FILTER_TRILINEAR);
+		UnloadImage(image);
 	}
 
 	void Update() override {
@@ -2012,7 +2128,6 @@ public:
 		}
 
 		i->imageOwner = false;
-		i->imageLoaded = false;
 		i->tex.id = 0;
 		i->setImage(this->image);
 
@@ -2034,6 +2149,8 @@ class TextureLabel : public Object2D {
 	constexpr static const char* DefaultName = "TextureLabel";
 	constexpr static InstanceType DefaultClass = TEXTURELABEL;
 
+	Image img{};
+	bool imageLoadedWhileNotReady = false;
 	Texture texture{};
 	bool owner = false;
 
@@ -2051,6 +2168,20 @@ public:
 	void Draw() override {
 		if (Visible) {
 			Object2D::Draw();
+			
+			if (imageLoadedWhileNotReady) {
+				imageLoadedWhileNotReady = false;
+
+				if (img.data != nullptr) {
+					if (texture.id != 0 and owner) UnloadTexture(texture);
+
+					owner = true;
+					texture = LoadTextureFromImage(img);
+					GenTextureMipmaps(&texture);
+					SetTextureFilter(texture, TEXTURE_FILTER_TRILINEAR);
+					UnloadImage(img);
+				}
+			}
 
 			if (RealPos.x + RealSize.x + BorderThickness < 0
 				or RealPos.x - RealSize.x - BorderThickness > winWidth
@@ -2064,6 +2195,31 @@ public:
 			}
 
 			DrawTexturePro(texture, { 0,0,(float)texture.width,(float)texture.height }, { RealPos.x, RealPos.y, RealSize.x, RealSize.y }, { 0,0 }, 0, WHITE);
+		}
+	}
+
+	void UpdateWithType(const std::string& type, std::vector<unsigned char>& data) {
+		if (!IsWindowReady()) {
+			if (imageLoadedWhileNotReady) {
+				UnloadImage(img);
+			}
+		}
+		
+		img = LoadImageFromMemory(type.c_str(), data.data(), data.size());
+
+		if (img.data == nullptr) return;
+		if (texture.id != 0 and owner) UnloadTexture(texture);
+
+		if (IsWindowReady()) {
+			imageLoadedWhileNotReady = false;
+
+			owner = true;
+			texture = LoadTextureFromImage(img);
+			GenTextureMipmaps(&texture);
+			SetTextureFilter(texture, TEXTURE_FILTER_TRILINEAR);
+			UnloadImage(img);
+		} else {
+			imageLoadedWhileNotReady = true;
 		}
 	}
 
@@ -2095,6 +2251,32 @@ public:
 		if (texture.id != 0 and owner) UnloadTexture(texture);
 	}
 };
+
+std::vector<unsigned char> ImageToJpgBytes(const std::string& path, int quality = 90) {
+	Image img = LoadImage(path.c_str());
+	
+	ImageFormat(&img, PIXELFORMAT_UNCOMPRESSED_R8G8B8);
+
+	std::vector<unsigned char> out;
+
+	stbi_write_jpg_to_func(
+		[](void* context, void* data, int size) {
+			auto* vec = static_cast<std::vector<unsigned char>*>(context);
+			unsigned char* bytes = static_cast<unsigned char*>(data);
+			vec->insert(vec->end(), bytes, bytes + size);
+		},
+		&out,
+		img.width,
+		img.height,
+		3,
+		img.data,
+		quality
+	);
+
+	UnloadImage(img);
+
+	return out;
+}
 
 void DrawFrame(Instance* StartInstance) {
 	BeginDrawing();
@@ -2630,6 +2812,8 @@ void start(Instance& StartInstance, Vector3 inf, const char* name, const char* i
 	SetExitKey(KEY_NULL);
 	createFont("Arial", "Fonts/arial.ttf", 100);
 	createFont("rog", "Fonts/rogFont.otf", 50);
+	loadNewShader("TextureRoundness", "", "include/simpleUI Shaders/texture_roundness.frag");
+
 	for (auto& tup : queuedFonts) {
 		createFont(std::get<0>(tup), std::get<1>(tup), std::get<2>(tup));
 	}

@@ -63,7 +63,7 @@ float GetMouseScreenPositionY() {
 	#ifdef _WIN32
 		POINT p;
 		GetCursorPos(&p);
-		return p.x;
+		return p.y;
 	#elif defined(__linux__)
 		int root_x, root_y;
 		int win_x, win_y;

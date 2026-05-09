@@ -7,8 +7,7 @@
 #include <set>
 #include <stdint.h>
 #include <string.h>
-#include <openssl/ssl.h>
-#include <openssl/err.h>
+#include <mutex>
 
 enum QueryType {
 	SignIn = 0,
@@ -47,38 +46,45 @@ constexpr int maxLoadedMessagesPerChat = 200;
 
 class Icon {
 	char* ptr = nullptr;
-	size_t size = 0;
+	size_t _size = 0;
 public:
+	size_t size() const {
+		return _size;
+	}
+
 	bool loaded() {
-		return ptr;
+		return ptr == nullptr;
 	}
 
 	std::pair<char*, size_t> getIcon() const {
-		return {ptr, size};
+		return { ptr, _size };
 	}
 
-	void loadIcon(char* p, size_t s) {
+	void loadIcon(const char* p, size_t s) {
 		if (ptr) {
-			if (size == s) {
-				memcpy(p, ptr, s);
+			if (_size == s) {
+				memcpy((void*)p, ptr, s);
 				return;
 			}
 		}
+		else {
+			delete[]ptr;
+		}
 
-		delete[]ptr;
 		ptr = new char[s];
-		memcpy(p, ptr, s);
+		_size = s;
+		memcpy((void*)p, ptr, s);
 	}
 
 	void unloadIcon() {
 		if (ptr) {
 			delete[] ptr;
 		}
-		size = 0;
+		_size = 0;
 	}
 
 	Icon() {}
-	Icon(char* p, size_t s) {
+	Icon(const char* p, size_t s) {
 		loadIcon(p, s);
 	}
 
@@ -89,7 +95,10 @@ public:
 
 class Client {
 public:
+	std::mutex asyncDataMutex;
+
 	std::string userName = "";
+	std::string login = "";
 	const unsigned long userID = 0;
 	size_t lastActivity = 0;
 	Icon avatar;

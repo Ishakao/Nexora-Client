@@ -8,6 +8,7 @@
 	#include <netinet/in.h>
 	#include <arpa/inet.h>
 	#include <unistd.h>
+	#include <signal.h>
 	using SOCKET = uint64_t;
 #endif
 
@@ -20,12 +21,11 @@
 #include <unordered_map>
 #include <future>
 #include <functional>
-#include <signal.h>
 
 #ifdef __linux__
 const char* IP = "127.0.0.1"; //  111.88.154.47
 #elif _WIN32
-const whcar_t* IP = L"127.0.0.1"; //  111.88.154.47
+const wchar_t* IP = L"127.0.0.1"; //  111.88.154.47
 #endif
 const short PORT = 7327;
 
@@ -57,12 +57,20 @@ SSL_CTX* create_context() {
 	return ctx;
 }
 
+std::atomic<bool> SSL_running = true;
+
 int recv_exact(char* buf, size_t payload) {
 	size_t writed = 0;
+	static std::mutex recv_mutex;
 
 	while (writed < payload) {
-		int l = SSL_read(clientData::SSL_Data, buf + writed,
-			((payload - writed < clientData::maxBuffer) ? payload - writed : clientData::maxBuffer));
+		if (!SSL_running.load()) {
+			return -1;
+		}
+		size_t expect_read = ((payload - writed < clientData::maxBuffer) ? payload - writed : clientData::maxBuffer);
+		recv_mutex.lock();
+		int l = SSL_read(clientData::SSL_Data, buf + writed, expect_read);
+		recv_mutex.unlock();
 
 		if (l > 0) {
 			writed += l;
@@ -100,9 +108,12 @@ int recv_exact(char* buf, size_t payload) {
 
 int send_exact(const char* buf, size_t payload) {
 	size_t sended = 0;
-	while (sended < payload) {
-		int l = SSL_write(clientData::SSL_Data, buf + sended, ((payload - sended < clientData::maxBuffer) ? payload - sended : clientData::maxBuffer));
+	static std::mutex send_mutex;
 
+	while (sended < payload) {
+		send_mutex.lock();
+		int l = SSL_write(clientData::SSL_Data, buf + sended, ((payload - sended < clientData::maxBuffer) ? payload - sended : clientData::maxBuffer));
+		send_mutex.unlock();
 		if (l > 0) {
 			sended += l;
 			continue;
@@ -147,13 +158,13 @@ std::thread* readerThread = nullptr;
 void data_reader() {
 	try {
 		readerThread = new std::thread([]() {
-			while (true) {
+			while (SSL_running.load()) {
 				networkHeader outputHeader;
 
 				int errcode = recv_exact((char*)&outputHeader, sizeof(networkHeader));
 				if (errcode == -1) {
 					std::cout << "fatal error 3" << std::endl;
-					exit(3);
+					break;
 				}
 
 				if (memcmp(&(outputHeader.magicNumber), &magicNumber, sizeof(magicNumber))) {
@@ -161,7 +172,11 @@ void data_reader() {
 				}
 
 				char* buf = new char[outputHeader.payload];
-				recv_exact(buf, outputHeader.payload);
+				int errcode2 = recv_exact(buf, outputHeader.payload);
+				if (errcode2 == -1) {
+					std::cout << "fatal error 6" << std::endl;
+					break;
+				}
 
 				std::shared_ptr<std::promise<std::pair<char*, size_t>>> prom;
 
@@ -187,13 +202,12 @@ void data_reader() {
 				}
 			}
 		});
-
 	} catch (const char* ex) {
 		std::cout << "Exception: " << ex << std::endl;
 	}
 }
 
-std::pair<char*, size_t> wait_data(uint32_t id) {
+std::pair<char*, size_t> wait_data(size_t id) {
 	auto prom = std::make_shared<std::promise<std::pair<char*, size_t>>>();
 	auto fut = prom->get_future();
 
@@ -217,6 +231,11 @@ std::pair<const char*, size_t> get_data(const char* inputData, QueryType type, s
 		std::cout << "fatal error 1" << std::endl;
 		return { nullptr, 0 };
 	}
+	
+	if (!inputData) {
+		inputData = "-";
+		size = 2;
+	}
 
 	int send_err2 = send_exact(inputData, size);
 
@@ -237,27 +256,29 @@ void serverDataFunction(std::function<void(std::pair<networkHeader, std::pair<ch
 }
 
 void cleanup() {
+	SSL_running.store(false);
+	shutdown(clientData::serverSocket, 2);
+	if (readerThread->joinable()) {
+		readerThread->join();
+		delete readerThread;
+	}
+
+#ifdef _WIN32
+	closesocket(clientData::serverSocket);
+	WSACleanup();
+#elif __linux__
+	close(clientData::serverSocket);
+#endif
+
 	SSL_shutdown(clientData::SSL_Data);
 	SSL_free(clientData::SSL_Data);
 	SSL_CTX_free(clientData::SSL_ctx);
-	EVP_cleanup();
-	
-	#ifdef _WIN32
-		closesocket(clientData::serverSocket);
-		WSACleanup();
-	#elif __linux__
-		close(clientData::serverSocket);
-	#endif
-
-	try {
-		delete readerThread;
-	} catch (const char* ex) {
-		std::cout << "Exception " << ex << std::endl;
-	}
 }
 
 void initialNetwork() {
-    signal(SIGPIPE, SIG_IGN);
+#ifdef __linux__
+	signal(SIGPIPE, SIG_IGN);
+#endif
 	init_openssl();
 	clientData::SSL_ctx = create_context();
 #ifdef _WIN32
@@ -291,9 +312,8 @@ void initialNetwork() {
 	}
 
 	SSL_set_fd(clientData::SSL_Data, clientData::serverSocket);
-	if (SSL_connect(clientData::SSL_Data) <= 0) {
+	while (SSL_connect(clientData::SSL_Data) <= 0) {
 		ERR_print_errors_fp(stderr);
-		exit(5);
 	}
 
 	data_reader();

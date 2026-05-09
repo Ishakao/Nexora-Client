@@ -7,6 +7,7 @@ int main() {
 	std::thread networkThread(initialNetwork);
 	std::thread interfaceThread(initialInterface);
 	interfaceThread.join();
+	networkThread.join();
 
 	cleanup();
 }
