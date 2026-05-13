@@ -1,5 +1,7 @@
 #pragma once
+#ifdef _WIN32
 #define STB_IMAGE_WRITE_IMPLEMENTATION
+#endif
 #define _CRT_SECURE_NO_WARNINGS
 #include "stb_image_write.h"
 #include <raylib.h>
@@ -1339,7 +1341,7 @@ class TextLabel : public Object2D {
 		} else {
 			visibleText = Text;
 		}
-
+		
 		textParams = getTextCFrame(visibleText.c_str(), getFont(font), { RealPos.x, RealPos.y, RealSize.x, RealSize.y }, TextAnchor, TextSize, Spacing);
 		lastRealSize = RealSize;
 		lastText = Text;
@@ -1349,20 +1351,20 @@ class TextLabel : public Object2D {
 		
 		newSize = MeasureTextEx(getFont(font), visibleText.c_str(), textParams.z, Spacing);
 
-		if (cachedText.id == 0 or lastNewSize.x < newSize.x or lastNewSize.y < newSize.y or lastNewSize.x == 0 or lastNewSize.y == 0) {
+		if (cachedText.id == 0 or lastNewSize.x < newSize.x or lastNewSize.y < newSize.y) {
 			if (cachedText.id != 0) {
 				UnloadRenderTexture(cachedText);
 			}
 			cachedText = LoadRenderTexture(newSize.x * TextTextureUpdateAspect, newSize.y * TextTextureUpdateAspect);
 			lastNewSize = { newSize.x * TextTextureUpdateAspect, newSize.y * TextTextureUpdateAspect };
 		}
-
+		
 		bool hadClip = !clipStack.empty();
 		Clip current;
 		if (hadClip) current = clipStack.back();
 
 		if (hadClip) EndScissorMode();
-
+		
 		BeginTextureMode(cachedText);
 		ClearBackground(BLANK);
 		DrawTextEx(getFont(font), visibleText.c_str(), { 0,0 }, textParams.z, Spacing, { 255,255,255,255 });
@@ -1404,7 +1406,7 @@ public:
 
 			Object2D::Draw();
 
-			if (cachedText.id == 0 or lastText != Text or lastFont != font or lastParams.z != textParams.z or lastMaxVisible != MaxVisibleSymbols) {
+			if (lastParams.z != textParams.z or cachedText.id == 0 or lastText != Text or lastFont != font or lastMaxVisible != MaxVisibleSymbols) {
 				updateTexture();
 			} else {
 				if (std::fabsf(lastRealSize.x - RealSize.x) >= TextTextureUpdateAspect or std::fabsf(lastRealSize.y - RealSize.y) >= TextTextureUpdateAspect) {
@@ -2052,6 +2054,7 @@ class ImageLabel : public Object2D {
 
 			tex = LoadTextureFromImage(image);
 			lastId = tex.id;
+
 			GenTextureMipmaps(&tex);
 			SetTextureFilter(tex, TEXTURE_FILTER_TRILINEAR);
 			SetTextureWrap(tex, TEXTURE_WRAP_CLAMP);
@@ -2073,6 +2076,7 @@ public:
 			if (tex.id != 0) {
 				UnloadTexture(tex);
 				imageOwner = false;
+				tex.id = 0;
 			}
 			return;
 		}
@@ -2083,15 +2087,20 @@ public:
 		if (tex.id != 0) {
 			UnloadTexture(tex);
 		}
+
+		lastId = -1818489;
 	}
 
-	void setImage(Image texture) {
+	void setImage(Image im) {
 		if (imageOwner and image.data) UnloadImage(image);
 		imageOwner = false;
-		image = texture;
+		image = im;
 		if (tex.id != 0) {
 			UnloadTexture(tex);
+			tex.id = 0;
 		}
+
+		lastId = -1010101;
 	}
 
 	void Draw() override {

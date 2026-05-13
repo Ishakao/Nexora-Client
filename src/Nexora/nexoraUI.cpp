@@ -1344,6 +1344,7 @@ int profileUI() {
 
 	ImageLabel* NameLowerLine = new ImageLabel(ProfileName);
 	ProfileName->PositionOFFSET = { 100,15 };
+	ProfileName->PlaceholderText = "Your public name"
 	ProfileName->SizeOFFSET = { 255, 45 };
 	ProfileName->BackgroundTransparency = 1;
 	ProfileName->TextColor = mulColor(DEFAULT_TEXT, 0.9);
