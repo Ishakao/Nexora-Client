@@ -63,14 +63,16 @@ int recv_exact(char* buf, size_t payload) {
 	size_t writed = 0;
 	static std::mutex recv_mutex;
 
+	recv_mutex.lock();
+
 	while (writed < payload) {
 		if (!SSL_running.load()) {
+			recv_mutex.unlock();
 			return -1;
 		}
+
 		size_t expect_read = ((payload - writed < clientData::maxBuffer) ? payload - writed : clientData::maxBuffer);
-		recv_mutex.lock();
 		int l = SSL_read(clientData::SSL_Data, buf + writed, expect_read);
-		recv_mutex.unlock();
 
 		if (l > 0) {
 			writed += l;
@@ -82,27 +84,33 @@ int recv_exact(char* buf, size_t payload) {
 		switch (err) {
 		case SSL_ERROR_ZERO_RETURN:
 			std::cout << "Client closed connection (TLS)" << std::endl;
+			recv_mutex.unlock();
 			return -1;
 
 		case SSL_ERROR_SSL:
 			std::cout << "SSL protocol error" << std::endl;
+			recv_mutex.unlock();
 			return -1;
 
 		case SSL_ERROR_SYSCALL:
 			std::cout << "Socket error / unexpected EOF" << std::endl;
+			recv_mutex.unlock();
 			return -1;
 
 		case SSL_ERROR_WANT_READ:
 		case SSL_ERROR_WANT_WRITE:
 			std::cout << "Unexpected WANT_READ/WRITE" << std::endl;
+			recv_mutex.unlock();
 			return -1;
 
 		default:
 			std::cout << "Unknown SSL error: " << err << std::endl;
+			recv_mutex.unlock();
 			return -1;
 		}
 	}
 
+	recv_mutex.unlock();
 	return 0;
 }
 
@@ -110,10 +118,12 @@ int send_exact(const char* buf, size_t payload) {
 	size_t sended = 0;
 	static std::mutex send_mutex;
 
+	send_mutex.lock();
+
 	while (sended < payload) {
-		send_mutex.lock();
+		
 		int l = SSL_write(clientData::SSL_Data, buf + sended, ((payload - sended < clientData::maxBuffer) ? payload - sended : clientData::maxBuffer));
-		send_mutex.unlock();
+
 		if (l > 0) {
 			sended += l;
 			continue;
@@ -124,27 +134,33 @@ int send_exact(const char* buf, size_t payload) {
 		switch (err) {
 		case SSL_ERROR_ZERO_RETURN:
 			std::cout << "Client closed connection (TLS)" << std::endl;
+			send_mutex.unlock();
 			return -1;
 
 		case SSL_ERROR_SSL:
 			std::cout << "SSL protocol error" << std::endl;
+			send_mutex.unlock();
 			return -1;
 
 		case SSL_ERROR_SYSCALL:
 			std::cout << "Socket error / unexpected EOF" << std::endl;
+			send_mutex.unlock();
 			return -1;
 
 		case SSL_ERROR_WANT_READ:
 		case SSL_ERROR_WANT_WRITE:
 			std::cout << "Unexpected WANT_READ/WRITE" << std::endl;
+			send_mutex.unlock();
 			return -1;
 
 		default:
 			std::cout << "Unknown SSL error: " << err << std::endl;
+			send_mutex.unlock();
 			return -1;
 		}
 	}
 
+	send_mutex.unlock();
 	return 0;
 }
 
@@ -226,18 +242,25 @@ std::pair<const char*, size_t> get_data(const char* inputData, QueryType type, s
 	inputHeader.type = type;
 	inputHeader.request_id = clientData::lastRequestId++;
 
-	int send_err1 = send_exact((char*)&inputHeader, sizeof(inputHeader));
-	if (send_err1 == -1) {
-		std::cout << "fatal error 1" << std::endl;
-		return { nullptr, 0 };
-	}
-	
 	if (!inputData) {
 		inputData = "-";
 		size = 2;
+		inputHeader.payload = 2;
+	}
+
+	static std::mutex data_mutex;
+
+	data_mutex.lock();
+	int send_err1 = send_exact((char*)&inputHeader, sizeof(inputHeader));
+	
+	if (send_err1 == -1) {
+		std::cout << "fatal error 1" << std::endl;
+		data_mutex.unlock();
+		return { nullptr, 0 };
 	}
 
 	int send_err2 = send_exact(inputData, size);
+	data_mutex.unlock();
 
 	if (send_err2 == -1) {
 		std::cout << "fatal error 2" << std::endl;

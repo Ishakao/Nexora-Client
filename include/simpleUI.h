@@ -1516,7 +1516,13 @@ KeyMapping KeysMapping[49] = {
 	// { KEY_ENTER, "", "\n", "", "\n"} // WIP
 };
 
+enum TextBoxType {
+	TextResizing = 0,
+	Viewported
+};
+
 class TextBox : public Object2D {
+	constexpr static float TextTextureUpdateAspect = 1.3;
 	constexpr static const char* DefaultName = "TextBox";
 	constexpr static InstanceType DefaultClass = TEXTBOX;
 
@@ -1541,8 +1547,6 @@ class TextBox : public Object2D {
 		charOffsets.push_back(Text.size());
 	}
 
-	float lastSize;
-
 	std::vector<int> charOffsets;
 	Vector3 textParams{};
 	std::string lastText{};
@@ -1554,16 +1558,32 @@ class TextBox : public Object2D {
 	std::string lastFont = "";
 	Vector3 lastParams = Vector3{};
 	char lastHideText = '\0';
-
 	Vector2 lastNewSize{};
-	void updateTexture() {
-		if (Text != "") {
-			textParams = getTextCFrame(Text.c_str(), getFont(font), { RealPos.x, RealPos.y, RealSize.x, RealSize.y }, TextAnchor, TextSize, Spacing);
+	TextBoxType lastType = TextResizing;
+	int lastCursorIndex = -1;
+
+	std::string Text = "";
+	float viewportPosition = 0;
+
+	std::function<void(Object2D*)> TextChanged;
+
+	void updateTextParams() {
+		if (Type == Viewported) {
+			textParams.y = 0;
+			textParams.x = 0;
+			textParams.z = RealSize.y;
 		}
 		else {
-			textParams = getTextCFrame(PlaceholderText.c_str(), getFont(font), { RealPos.x, RealPos.y, RealSize.x, RealSize.y }, TextAnchor, TextSize, Spacing);
+			if (Text != "") {
+				textParams = getTextCFrame(Text.c_str(), getFont(font), { RealPos.x, RealPos.y, RealSize.x, RealSize.y }, TextAnchor, TextSize, Spacing);
+			}
+			else {
+				textParams = getTextCFrame(PlaceholderText.c_str(), getFont(font), { RealPos.x, RealPos.y, RealSize.x, RealSize.y }, TextAnchor, TextSize, Spacing);
+			}
 		}
-
+	}
+	void updateTexture() {
+		updateTextParams();
 		lastText = Text;
 		lastPlaceholder = PlaceholderText;
 		lastFocused = FocusedTextBox;
@@ -1571,11 +1591,11 @@ class TextBox : public Object2D {
 		lastParams = textParams;
 		lastRealSize = RealSize;
 		lastHideText = HideText;
+		lastType = Type;
 
 		if (Text != "") {
 			newSize = MeasureTextEx(getFont(font), Text.c_str(), textParams.z, Spacing);
-		}
-		else {
+		} else {
 			if (CursorIndex == -1 or FocusedTextBox != this) {
 				newSize = MeasureTextEx(getFont(font), PlaceholderText.c_str(), textParams.z, Spacing);
 			}
@@ -1586,8 +1606,8 @@ class TextBox : public Object2D {
 				UnloadRenderTexture(cachedText);
 			}
 
-			cachedText = LoadRenderTexture(newSize.x * 2, newSize.y * 2);
-			lastNewSize = { newSize.x * 2, newSize.y * 2 };
+			cachedText = LoadRenderTexture(newSize.x * TextTextureUpdateAspect, newSize.y * TextTextureUpdateAspect);
+			lastNewSize = { newSize.x * TextTextureUpdateAspect, newSize.y * TextTextureUpdateAspect };
 		}
 
 		bool hadClip = !clipStack.empty();
@@ -1608,6 +1628,7 @@ class TextBox : public Object2D {
 					t += HideText;
 				}
 			}
+
 			DrawTextEx(getFont(font), t.c_str(), {0,0}, textParams.z, Spacing, {255,255,255,255});
 		} else {
 			if (CursorIndex == -1 or FocusedTextBox != this) {
@@ -1623,10 +1644,9 @@ public:
 	Color CursorColor = { 0,0,0,255 };
 	std::string PlaceholderText = "PlaceholderText";
 	Color PlaceholderTextColor = { 150, 150, 150, 255 };
-	std::string Text = "";
 	Color TextColor = { 0,0,0,255 };
 	TextAnchorEnum TextAnchor = TextAnchorEnum::CENTER;
-	int TextSize = 10;
+	int TextSize = -1;
 	int maxSymbols = 20;
 	float TextTransparency = 0;
 	std::string AllowedSymbols = "";
@@ -1635,6 +1655,7 @@ public:
 	char HideText = '\0';
 	bool ClearOnClick = true;
 	int CursorSize = 3;
+	TextBoxType Type = TextResizing;
 
 	void Draw() override {
 		if (!Visible) return;
@@ -1644,6 +1665,7 @@ public:
 			or RealPos.y - RealSize.y - BorderThickness > winHeight) {
 			return;
 		}
+
 		ScrollFrame* ancestor = nullptr; Instance* c = findFirstAncestorOfClass(SCROLLFRAME); if (c) ancestor = static_cast<ScrollFrame*>(c);
 		if (ancestor and ancestor->CropDescendants) {
 			if (RealPos.x + RealSize.x + BorderThickness < ancestor->RealPos.x or
@@ -1656,18 +1678,20 @@ public:
 
 		Object2D::Draw();
 
-		if (cachedText.id == 0 or lastHideText != HideText or lastParams.x != textParams.x or lastParams.y != textParams.y or lastParams.z != textParams.z or lastText != Text or lastFont != font or (FocusedTextBox == this and lastFocused != this) or (lastFocused == this and FocusedTextBox != this)) {
+		if (lastType != Type or cachedText.id == 0 or lastHideText != HideText or lastParams.x != textParams.x or lastParams.y != textParams.y or lastParams.z != textParams.z or lastFont != font or (FocusedTextBox == this and lastFocused != this) or (lastFocused == this and FocusedTextBox != this)) {
 			updateTexture();
-		}
-		else {
+		} else if (lastText != Text) {
+			updateTexture();
+			if (TextChanged) {
+				TextChanged(this);
+			}
+		} else {
 			if (lastRealSize.x != RealSize.x or lastRealSize.y != RealSize.y) {
+				updateTextParams();
 				if (Text == "") {
 					newSize = MeasureTextEx(getFont(font), PlaceholderText.c_str(), textParams.z, Spacing);
-					textParams = getTextCFrame(PlaceholderText.c_str(), getFont(font), { RealPos.x, RealPos.y, RealSize.x, RealSize.y }, TextAnchor, TextSize, Spacing);
-				}
-				else {
+				} else {
 					newSize = MeasureTextEx(getFont(font), Text.c_str(), textParams.z, Spacing);
-					textParams = getTextCFrame(Text.c_str(), getFont(font), { RealPos.x, RealPos.y, RealSize.x, RealSize.y }, TextAnchor, TextSize, Spacing);
 				}
 			}
 		}
@@ -1676,15 +1700,17 @@ public:
 			if (cachedText.id == 0) {
 				updateTexture();
 			}
-			Rectangle sourceRec = { 0.0f, (float)(cachedText.texture.height - newSize.y), (float)newSize.x, -(float)newSize.y };
-			Rectangle destRec = { RealPos.x + textParams.x, RealPos.y + textParams.y, (float)newSize.x, (float)newSize.y };
+
+			Vector2 sizeToDraw = (Type == Viewported) ? RealSize : newSize;
+
+			Rectangle sourceRec = { (Type == Viewported) ? viewportPosition : 0.0f, (cachedText.texture.height - sizeToDraw.y), sizeToDraw.x, -sizeToDraw.y};
+			Rectangle destRec = { RealPos.x + textParams.x, RealPos.y + textParams.y, sizeToDraw.x, sizeToDraw.y };
 			Vector2 origin = { 0, 0 };
 
 			Color clr;
 			if (Text == "") {
 				clr = { PlaceholderTextColor.r, PlaceholderTextColor.g, PlaceholderTextColor.b, (unsigned char)(PlaceholderTextColor.a * (1 - TextTransparency)) };
-			}
-			else {
+			} else {
 				clr = { TextColor.r, TextColor.g, TextColor.b, (unsigned char)(TextColor.a * (1 - TextTransparency)) };
 			}
 
@@ -1695,13 +1721,12 @@ public:
 			if (CursorVisible and FocusedTextBox == this) {
 				if (textParams.z > 3) {
 					float sizeY = MeasureTextEx(getFont(font), " ", textParams.z, Spacing).y;
-					DrawLineEx({ RealPos.x + getTextOffset(TextAnchor).x * RealSize.x, RealPos.y + textParams.y + 2 }, { RealPos.x + getTextOffset(TextAnchor).x * RealSize.x, RealPos.y + textParams.y + sizeY - 4 }, CursorSize, CursorColor);
+					DrawLineEx({ RealPos.x + getTextOffset(TextAnchor).x * RealSize.x - ((Type == Viewported) ? viewportPosition : 0), RealPos.y + textParams.y + 2 }, { RealPos.x + getTextOffset(TextAnchor).x * RealSize.x - ((Type == Viewported) ? viewportPosition : 0), RealPos.y + textParams.y + sizeY - 4 }, CursorSize, CursorColor);
 				}
 			}
 		}
 
 		if (CursorIndex >= 0 and CursorVisible and Text != "" and textParams.z > 3) {
-
 			int bytePos = (CursorIndex < (int)charOffsets.size()) ? charOffsets[CursorIndex] : Text.size();
 			std::string textBeforeCursor = Text.substr(0, bytePos);
 			if (HideText != '\0') {
@@ -1710,22 +1735,25 @@ public:
 					textBeforeCursor += HideText;
 				}
 			}
+
 			Vector2 size = MeasureTextEx(getFont(font), textBeforeCursor.c_str(), textParams.z, Spacing);
 
 			if (size.x == 0 and size.y == 0) {
 				size.y = MeasureTextEx(getFont(font), "a", textParams.z, Spacing).y;
 			}
 
-			DrawLineEx({ RealPos.x + textParams.x + size.x + 2, RealPos.y + textParams.y + 2 }, { RealPos.x + textParams.x + size.x + 2, RealPos.y + textParams.y + size.y - 4 }, CursorSize, CursorColor);
+			DrawLineEx({ RealPos.x + textParams.x + size.x + 2 - ((Type == Viewported) ? viewportPosition : 0), RealPos.y + textParams.y + 2 }, { RealPos.x + textParams.x + size.x + 2 - ((Type == Viewported) ? viewportPosition : 0), RealPos.y + textParams.y + size.y - 4 }, CursorSize, CursorColor);
 		}
 	}
 
 	void Update() override {
 		if (!Visible) { CursorIndex = -1; CursorVisible = false; Text = ""; return; }
 		if (!(FocusedTextBox == this)) { CursorIndex = -1; CursorVisible = false; deleteText = true; }
+		
 		getRealObject2Dsize();
 		getRealObject2Dposition();
 		eventHandler();
+
 		if (updateChildrenZIndex) {
 			updateChildren(this);
 		}
@@ -1775,10 +1803,7 @@ public:
 					text = Text;
 				}
 
-				Vector3 textParams = getTextCFrame(Text != "" ? text.c_str() : PlaceholderText.c_str(), getFont(font), { RealPos.x, RealPos.y, RealSize.x, RealSize.y }, TextAnchor, TextSize, Spacing);
-
-				float textStartX = RealPos.x + textParams.x;
-				float clickX = mousePosition.x - textStartX;
+				updateTextParams();
 				std::string textBeforeCursor;
 				if (HideText != '\0') {
 					for (int i = 0; i < Text.size(); i++) {
@@ -1787,19 +1812,22 @@ public:
 				} else {
 					textBeforeCursor = Text;
 				}
+
+				float textStartX = RealPos.x + textParams.x;
+				float clickX = mousePosition.x - textStartX + ((Type == Viewported) ? viewportPosition : 0.0f);
+
 				CursorIndex = 0;
 				if (!Text.empty()) {
 					for (int i = 1; i < charOffsets.size(); i++) {
 						float widthPrev = MeasureTextEx(getFont(font), text.substr(0, charOffsets[i - 1]).c_str(), textParams.z, Spacing).x;
 						float widthCurr = MeasureTextEx(getFont(font), text.substr(0, charOffsets[i]).c_str(), textParams.z, Spacing).x;
 						if (clickX < (widthPrev + widthCurr) / 2.0f) {
-							CursorIndex = (int)(i - 1);
+							CursorIndex = i - 1;
 							break;
 						}
-						CursorIndex = (int)i;
+						CursorIndex = i;
 					}
-				}
-				else {
+				} else {
 					CursorIndex = 0;
 				}
 			}
@@ -1921,6 +1949,31 @@ public:
 			}
 		}
 
+		if (Type == Viewported) {
+			if (lastCursorIndex != CursorIndex) {
+				lastCursorIndex = CursorIndex;
+
+				if (Text.empty() or CursorIndex == -1) {
+					viewportPosition = 0.0f;
+				} else {
+					std::string textBeforeCursor = Text.substr(0, CursorIndex);
+					Vector2 textSize = MeasureTextEx(getFont(font), textBeforeCursor.c_str(), textParams.z, Spacing);
+
+					float currentX = textSize.x;
+
+					if (currentX - viewportPosition >= RealSize.x) {
+						viewportPosition = currentX - RealSize.x;
+					}
+					else if (currentX < viewportPosition) {
+						viewportPosition = currentX;
+					}
+
+					if (viewportPosition < 0) viewportPosition = 0;
+					if (viewportPosition > newSize.x) viewportPosition = newSize.x - RealSize.x;
+				}
+			}
+		}
+
 		Draw();
 
 		for (int i = 0; i < Children.size(); i++) {
@@ -1933,6 +1986,27 @@ public:
 		if (cachedText.id != 0) {
 			UnloadRenderTexture(cachedText);
 		}
+	}
+
+	void SetText(const std::string& t) {
+		if (t.size() > maxSymbols) {
+			Text = t.substr(0, maxSymbols);
+			updateCharOffsets();
+			CursorIndex = maxSymbols;
+			return;
+		}
+
+		Text = t;
+		updateCharOffsets();
+		CursorIndex = t.size();
+	}
+
+	std::string GetText() const {
+		return Text;
+	}
+
+	void OnTextChanged(std::function<void(Object2D*)> f) {
+		TextChanged = f;
 	}
 
 	TextBox* Clone() const override {
@@ -1980,6 +2054,7 @@ class ImageLabel : public Object2D {
 			lastId = tex.id;
 			GenTextureMipmaps(&tex);
 			SetTextureFilter(tex, TEXTURE_FILTER_TRILINEAR);
+			SetTextureWrap(tex, TEXTURE_WRAP_CLAMP);
 		}
 	}
 public:
@@ -1988,6 +2063,8 @@ public:
 	float ImageTransparency = 0.0f;
 	Color ImageColor = { 255,255,255,255 };
 	bool RoundImage = false;
+	float Rotation = 0;
+	Vector2 Origin = { 0, 0 };
 
 	void setImage(std::string way = "") {
 		if (way == "" or way == "\n") {
@@ -2029,7 +2106,7 @@ public:
 		}
 
 		if (tex.id) {
-			Rectangle destRec = { RealPos.x, RealPos.y, RealSize.x, RealSize.y };
+			Rectangle destRec = { RealPos.x+Origin.x, RealPos.y+Origin.y, RealSize.x, RealSize.y };
 			Rectangle srcRec = { 0, 0, image.width, image.height };
 
 			if (Overlay == FIT) {
@@ -2075,10 +2152,10 @@ public:
 				}
 				
 				BeginShaderMode(shader);
-				DrawTexturePro(tex, srcRec, destRec, { 0,0 }, 0.0f, { ImageColor.r, ImageColor.g, ImageColor.b, (unsigned char)(ImageColor.a * (1 - ImageTransparency)) });
+				DrawTexturePro(tex, srcRec, destRec, Origin, Rotation, { ImageColor.r, ImageColor.g, ImageColor.b, (unsigned char)(ImageColor.a * (1 - ImageTransparency)) });
 				EndShaderMode();
 			} else {
-				DrawTexturePro(tex, srcRec, destRec, { 0,0 }, 0.0f, { ImageColor.r, ImageColor.g, ImageColor.b, (unsigned char)(ImageColor.a * (1 - ImageTransparency)) });
+				DrawTexturePro(tex, srcRec, destRec, Origin, Rotation, { ImageColor.r, ImageColor.g, ImageColor.b, (unsigned char)(ImageColor.a * (1 - ImageTransparency)) });
 			}
 		}
 	}
@@ -2095,6 +2172,7 @@ public:
 		tex = LoadTextureFromImage(image);
 		GenTextureMipmaps(&tex);
 		SetTextureFilter(tex, TEXTURE_FILTER_TRILINEAR);
+		SetTextureWrap(tex, TEXTURE_WRAP_CLAMP);
 		UnloadImage(image);
 	}
 
@@ -2165,6 +2243,10 @@ class TextureLabel : public Object2D {
 		}
 	}
 public:
+	float Rotation = 0;
+	Color TextureColor = { 255,255,255,255 };
+	Vector2 Origin = { 0, 0 };
+
 	void Draw() override {
 		if (Visible) {
 			Object2D::Draw();
@@ -2194,7 +2276,7 @@ public:
 				return;
 			}
 
-			DrawTexturePro(texture, { 0,0,(float)texture.width,(float)texture.height }, { RealPos.x, RealPos.y, RealSize.x, RealSize.y }, { 0,0 }, 0, WHITE);
+			DrawTexturePro(texture, { 0,0,(float)texture.width,(float)texture.height }, { RealPos.x, RealPos.y, RealSize.x, RealSize.y }, Origin, Rotation, TextureColor);
 		}
 	}
 

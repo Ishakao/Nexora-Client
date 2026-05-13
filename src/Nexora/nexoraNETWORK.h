@@ -18,7 +18,9 @@ enum QueryType {
 	NEW_DATA_FROM_SERVER,
 	GET_CHAT,
 	GET_CHATS,
-	GET_CHAT_MEMBERS
+	GET_CHAT_MEMBERS,
+	UPDATE_NAME,
+	UPDATE_AVATAR
 };
 
 class Client;
@@ -95,8 +97,6 @@ public:
 
 class Client {
 public:
-	std::mutex asyncDataMutex;
-
 	std::string userName = "";
 	std::string login = "";
 	const unsigned long userID = 0;

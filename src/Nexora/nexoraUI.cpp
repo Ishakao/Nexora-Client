@@ -23,6 +23,8 @@ static inline bool Authenticated = false;
 static inline bool ChatsUpdated = false;
 unsigned long clientId = 0;
 
+std::recursive_mutex asyncDataMutex;
+
 enum WhereOnUI {
 	AUTH = 0,
 	GENERAL,
@@ -34,6 +36,75 @@ enum WhereOnUI {
 namespace GlobalStates {
 	WhereOnUI UIstate = AUTH;
 };
+
+enum InfoMessageType {
+	SUCCESS = 0,
+	WARN,
+	ERROR
+};
+
+void SendInfoMessage(const std::string& title, const std::string& text, InfoMessageType type) {
+	if (!StartInstance) return;
+
+	static std::mutex mtx;
+
+	Color color = (type == SUCCESS ? Color{ 141, 233, 147, 255 } : ((type == WARN) ? Color{ 243, 187, 31, 255 } : Color{ 228, 106, 92, 255 }));
+	static std::vector<Object2D*> messages;
+	Object2D* msg = new Object2D(StartInstance);
+	msg->BackgroundColor = mulColor(DEFAULT_BACKGROUND, 0.8);
+	msg->ZIndex = 999;
+	msg->Active = true;
+	msg->BorderColor = color;
+	msg->BorderThickness = 3;
+	msg->Position = { 1, 1 };
+	msg->SizeOFFSET = { 225, 75 };
+	msg->PositionOFFSET = {15, -85};
+	msg->Roundness = 0.2;
+	msg->BackgroundTransparency = 0.1;
+	msg->BorderTransparency = 0.1;
+	TextLabel* tit = new TextLabel(msg);
+	tit->Size = { 1, 0.35 };
+	tit->TextAnchor = TextAnchorEnum::W;
+	tit->Text = " " + title + " ";
+	tit->TextColor = color;
+	tit->TextTransparency = 0.2;
+	tit->font = "SegoeB";
+	tit->BackgroundTransparency = 1;
+	TextLabel* tex = new TextLabel(msg);
+	tex->Size = { 1, 0.65 };
+	tex->Position = { 0, 0.35 };
+	tex->TextAnchor = TextAnchorEnum::NW;
+	tex->Text = " " + text + " ";
+	tex->TextColor = color;
+	tex->TextTransparency = 0.2;
+	tex->font = "SegoeB";
+	tex->BackgroundTransparency = 1;
+
+	Animate::Create(&msg->PositionOFFSET.x, 0.15, -250);
+	mtx.lock();
+	for (int i = 0; i < messages.size(); i++) {
+		Object2D* m = messages[i];
+		Animate::Create(&m->PositionOFFSET.y, 0.125, -85 * ((long)messages.size() - i+1));
+	}
+	messages.push_back(msg);
+	mtx.unlock();
+
+	new Tasks::Task(8, [msg]() {
+		mtx.lock();
+		for (int i = 0; i < messages.size(); i++) {
+			Object2D* m = messages[i];
+			if (m == msg) {
+				messages.erase(messages.begin() + i);
+				auto a = Animate::Create(&m->PositionOFFSET.x, 0.15, 15);
+				a->Completed = [m]() {
+					Delete(m); 
+				};
+				break;
+			}
+		}
+		mtx.unlock();
+	});
+}
 
 std::mutex ImagesLoadingMtx;
 std::unordered_map<std::string, Image> loadedImages;
@@ -64,17 +135,6 @@ Image getImage(const std::string& name) {
 	}
 
 	throw "Image not found";
-}
-
-std::string long_to_string(size_t l) {
-	std::string stringID = "";
-	size_t num = l;
-	while (num >= 1) {
-		stringID += '0' + (num % 10);
-		num /= 10;
-	}
-	std::reverse(stringID.begin(), stringID.end());
-	return stringID;
 }
 
 size_t string_to_size_t(std::string s) {
@@ -113,15 +173,19 @@ public:
 
 	void send() {
 		std::thread a([this]() {
+
 			bool completed = false;
 			if (sendedFunction) {
 				sendedFunction();
 			}
+
 			output_data = get_data(ptr, type, size);
 			completed = true;
+
 			if (completedFunction) {
 				completedFunction(output_data);
 			}
+
 			if (deleteOnCompleted) {
 				delete this;
 			}
@@ -195,7 +259,6 @@ std::vector<Chat*> deserializeChats(std::pair<const char*, size_t> data) {
 		result.push_back(deserializeChat({ chunk.data(), chunk.size() }));
 	}
 
-	std::cout << 4 << std::endl;
 	return result;
 }
 
@@ -231,7 +294,7 @@ std::mutex loadChatsMutex;
 
 void loadChats(const size_t chatID, std::function<void(void)> f) { // chatID == 0: all chats
 	if (chatID) {
-		std::string stringID = long_to_string(chatID);
+		std::string stringID = std::to_string(chatID);
 		char* input = new char[stringID.size()+1];
 		memcpy(input, stringID.data(), stringID.size());
 		input[stringID.size()] = '\0';
@@ -265,8 +328,6 @@ void loadChats(const size_t chatID, std::function<void(void)> f) { // chatID == 
 			if (!data.first) {
 				std::cout << "No chats data" << std::endl;
 				return;
-			} else {
-				std::cout << "Chats data: " << data.first << " | " << data.second << std::endl;
 			}
 
 			if (!memcmp(data.first, "e1", 3)) {
@@ -833,16 +894,16 @@ int initAuth() {
 	});
 	CheckLogin->SetMouse1HoldEnd([DataIncorrect, CheckLogin, Login, Password](Object2D* t) {
 		if (Authenticated) return;
-		if (Login->Text.empty() or Password->Text.empty()) return;
+		if (Login->GetText().empty() or Password->GetText().empty()) return;
 
 		DataIncorrect->TextTransparency = 1;
 
-		size_t size = Login->Text.size() + Password->Text.size() + 1;
+		size_t size = Login->GetText().size() + Password->GetText().size() + 1;
 
 		char* input = new char[size];
-		memcpy(input, Login->Text.c_str(), Login->Text.size());
-		input[Login->Text.size()] = '|';
-		memcpy(input + Login->Text.size() + 1, Password->Text.c_str(), Password->Text.size());
+		memcpy(input, Login->GetText().c_str(), Login->GetText().size());
+		input[Login->GetText().size()] = '|';
+		memcpy(input + Login->GetText().size() + 1, Password->GetText().c_str(), Password->GetText().size());
 
 		AsyncData* data = new AsyncData(input, QueryType::SignIn, size);
 		data->deleteOnCompleted = false;
@@ -886,17 +947,16 @@ int initAuth() {
 					});
 					DataIncorrect->TextTransparency = 1;
 					
-					std::string string_id = long_to_string(id);
+					std::string string_id = std::to_string(id);
 					char* input2 = new char[string_id.size() + 1];
 					memcpy(input2, string_id.data(), string_id.size());
 					input2[string_id.size()] = '\0';
-
-					AsyncData* data2 = new AsyncData(input2, QueryType::GET_USER_INFO, string_id.size());
+					
+					AsyncData* data2 = new AsyncData(input2, QueryType::GET_USER_INFO, string_id.size()+1);
 					data2->Completed([input2, data](std::pair<const char*, size_t> output1){
-						delete[] input2;
-
 						if (!output1.first) {
 							delete data;
+							delete[] input2;
 							return;
 						}
 
@@ -904,18 +964,23 @@ int initAuth() {
 							std::cout << "No client with id " << input2 << std::endl;
 							delete[] output1.first;
 							delete data;
+							delete[] input2;
 							return;
 						}
 
+						delete[] input2;
+
+						asyncDataMutex.lock();
 						if (*getClientPtr()) {
 							delete* getClientPtr();
 						}
-							
+
 						*getClientPtr() = deserializeClient(std::string(output1.first));
+						asyncDataMutex.unlock();
+
 						delete[] output1.first;
 						delete data;
 					});
-
 					data2->send();
 				}
 				delete[]output.first;
@@ -1063,8 +1128,8 @@ int initAuth() {
 	});
 	CheckLogin2->SetMouse1HoldEnd([DataIncorrect2, CheckLogin2, Login2, Password2, Password22](Object2D* t) {
 		if (Authenticated) return;
-		if (Login2->Text.empty() or Password2->Text.empty() or Password22->Text.empty()) return;
-		if (strcmp(Password2->Text.c_str(), Password22->Text.c_str())) {
+		if (Login2->GetText().empty() or Password2->GetText().empty() or Password22->GetText().empty()) return;
+		if (strcmp(Password2->GetText().c_str(), Password22->GetText().c_str())) {
 			DataIncorrect2->Text = "Passwords must match";
 			DataIncorrect2->TextTransparency = 0;
 			return;
@@ -1072,12 +1137,12 @@ int initAuth() {
 
 		DataIncorrect2->TextTransparency = 1;
 
-		size_t size = Login2->Text.size() + Password2->Text.size() + 1;
+		size_t size = Login2->GetText().size() + Password2->GetText().size() + 1;
 
 		char* input = new char[size];
-		memcpy(input, Login2->Text.c_str(), Login2->Text.size());
-		input[Login2->Text.size()] = '|';
-		memcpy(input + Login2->Text.size() + 1, Password2->Text.c_str(), Password2->Text.size());
+		memcpy(input, Login2->GetText().c_str(), Login2->GetText().size());
+		input[Login2->GetText().size()] = '|';
+		memcpy(input + Login2->GetText().size() + 1, Password2->GetText().c_str(), Password2->GetText().size());
 
 		AsyncData* data = new AsyncData(input, QueryType::SignUp, size);
 		data->deleteOnCompleted	= false;
@@ -1117,21 +1182,22 @@ int initAuth() {
 					});
 					DataIncorrect2->TextTransparency = 1;
 					
-					std::string string_id = long_to_string(id);
+					std::string string_id = std::to_string(id);
 					char* input2 = new char[string_id.size() + 1];
 					memcpy(input2, string_id.data(), string_id.size());
 					input2[string_id.size()] = '\0';
 					
 					AsyncData* data2 = new AsyncData(input2, QueryType::GET_USER_INFO, string_id.size());
-					data2->Completed([input2, data](std::pair<const char*, size_t> output1){
+					data2->Completed([input2, data, id](std::pair<const char*, size_t> output1){
 						if (!output1.first) {
+							SendInfoMessage("Get user error", "Something went wrong.\nPlease retry", ERROR);
 							delete data;
 							delete[] input2;
 							return;
 						}
 
 						if (!strcmp(output1.first, "e1")) {
-							std::cout << "No client with id " << input2 << std::endl;
+							SendInfoMessage("Get user error", "No user with id " + std::to_string(id), ERROR);
 							delete[] output1.first;
 							delete data;
 							delete[] input2;
@@ -1168,8 +1234,204 @@ int initAuth() {
 }
 
 ScrollFrame* settingsAnimationScroll = nullptr;
+Object2D* profileFrame = nullptr;
+
+int profileUI() {
+	if (profileFrame) {
+		return 1;
+	}
+
+	profileFrame = new ScrollFrame(StartInstance->findChild("GeneralUI background"));
+	profileFrame->SizeOFFSET.x = 400;
+	profileFrame->SizeOFFSET.y = 450;
+	profileFrame->BackgroundColor = mulColor(DEFAULT_BACKGROUND, 1.2);
+	profileFrame->Roundness = 0.1;
+	profileFrame->BorderColor = DEFAULT_BACKGROUND;
+	profileFrame->BorderThickness = 4;
+	profileFrame->ZIndex = 15;
+	profileFrame->AnchorPosition = { 0.5,0.5 };
+	profileFrame->Position = { 0.5,0.5 };
+	profileFrame->Active = true;
+	profileFrame->Name = "profileFrame";
+
+	ImageLabel* ProfileImage = new ImageLabel(profileFrame);
+	ProfileImage->SizeOFFSET = { 70, 70 };
+	ProfileImage->PositionOFFSET = { 15,15 };
+	ProfileImage->BackgroundTransparency = 1;
+	ProfileImage->setImage(getImage("profile"));
+	ProfileImage->ImageColor = DEFAULT_TEXT;
+	ProfileImage->Roundness = 1;
+	ProfileImage->RoundImage = true;
+	ProfileImage->BorderColor = mulColor(DEFAULT_BACKGROUND, 1);
+	ProfileImage->BorderThickness = 3;
+	ProfileImage->Name = "ProfileImage";
+
+	Object2D* changeImage = new Object2D(ProfileImage);
+	changeImage->Size = { 1.01,1.01 };
+	changeImage->AnchorPosition = { 0.5,0.5 };
+	changeImage->Position = { 0.5,0.5 };
+	changeImage->Roundness = 1;
+	changeImage->BackgroundTransparency = 1; 
+	changeImage->BorderColor = mulColor(DEFAULT_BACKGROUND, 1);
+	changeImage->BorderThickness = 3;
+	changeImage->Active = true;
+
+	ImageLabel* changeImageImg = new ImageLabel(changeImage);
+	changeImageImg->Size = { 0.5,0.5 };
+	changeImageImg->AnchorPosition = { 0.5,0.5 };
+	changeImageImg->Position = { 0.5,0.5 };
+	changeImageImg->BackgroundTransparency = 1;
+	changeImageImg->setImage(getImage("change_pencil"));
+	changeImageImg->ImageTransparency = 1; 
+
+	changeImage->SetMouseEnter([changeImage, changeImageImg](Object2D* t) {
+		Animate::Create(&changeImage->BackgroundTransparency, 0.1, 0.5);
+		Animate::Create(&changeImageImg->ImageTransparency, 0.1, 0);
+	});
+
+	changeImage->SetMouseLeave([changeImage, changeImageImg](Object2D* t) {
+		Animate::Create(&changeImage->BackgroundTransparency, 0.1, 1);
+		Animate::Create(&changeImageImg->ImageTransparency, 0.1, 1);
+	});
+
+	ImageLabel* ConfirmName = new ImageLabel(profileFrame);
+	ConfirmName->PositionOFFSET = { 375, 37.5 };
+	ConfirmName->SizeOFFSET = { 25, 25 };
+	ConfirmName->AnchorPosition = { 0.5, 0.5 };
+	ConfirmName->BackgroundTransparency = 1;
+	ConfirmName->ImageColor = { 130, 200, 80, 255 };
+	ConfirmName->setImage(getImage("checked"));
+	ConfirmName->Active = false;
+	ConfirmName->Visible = false;
+	ConfirmName->Origin = { 12.5, 12.5 };
+	ConfirmName->SetMouseEnter([ConfirmName](Object2D* t) {
+		Animate::Create(&ConfirmName->Rotation, 0.125, 20);
+		Animate::Create(&ConfirmName->ImageColor, 0.125, DEFAULT_TEXT);
+		Animate::Create(&ConfirmName->SizeOFFSET, 0.125, { 35, 35 });
+		Animate::Create(&ConfirmName->Origin, 0.125, { 17.5, 17.5 });
+	});
+	ConfirmName->SetMouseLeave([ConfirmName](Object2D* t) {
+		Animate::Create(&ConfirmName->Rotation, 0.125, 0);
+		Animate::Create(&ConfirmName->ImageColor, 0.125, { 130, 200, 80, 255 });
+		Animate::Create(&ConfirmName->SizeOFFSET, 0.125, { 25, 25 });
+		Animate::Create(&ConfirmName->Origin, 0.125, { 12.5, 12.5 });
+	});
+
+	TextBox* ProfileName = new TextBox(profileFrame);
+
+	ConfirmName->SetMouse1HoldEnd([ProfileName](Object2D* T) {
+		std::string text = ProfileName->GetText();
+		char* input = new char[text.size() + 1];
+		input[text.size()] = '\0';
+		memcpy(input, text.c_str(), text.size());
+		auto as = new AsyncData(input, UPDATE_NAME, text.size() + 1);
+		as->Completed([input](std::pair<const char*, size_t> data) {
+			delete input;
+
+			if (!data.first) {
+				SendInfoMessage("Name confirm warn", "Something went wrong.\nPlease retry", WARN);
+				return;
+			}
+
+			if (!strcmp(data.first, "e1")) {
+				SendInfoMessage("Name confirm error", "Server error (e1)", ERROR);
+			} else {
+
+			}
+		});
+		as->send();
+	});
+
+	ImageLabel* NameLowerLine = new ImageLabel(ProfileName);
+	ProfileName->PositionOFFSET = { 100,15 };
+	ProfileName->SizeOFFSET = { 255, 45 };
+	ProfileName->BackgroundTransparency = 1;
+	ProfileName->TextColor = mulColor(DEFAULT_TEXT, 0.9);
+	ProfileName->SetText("Profile name");
+	ProfileName->maxSymbols = 40;
+	ProfileName->ClearOnClick = false;
+	ProfileName->font = "SegoeB";
+	ProfileName->Name = "ProfileName";
+	ProfileName->CursorColor = mulColor(DEFAULT_TEXT, 0.9);
+	ProfileName->TextAnchor = TextAnchorEnum::W;
+	ProfileName->Type = Viewported;
+	ProfileName->OnTextChanged([ProfileName, ConfirmName, NameLowerLine](Object2D* t) {
+		if (ProfileName->GetText() == (*getClientPtr())->userName) {
+			ConfirmName->Active = false;
+			ConfirmName->Visible = false;
+			NameLowerLine->Visible = false;
+			return;
+		}
+
+		if (ProfileName->GetText().size()) {
+			ConfirmName->Active = true;
+			ConfirmName->Visible = true;
+			NameLowerLine->Visible = true;
+			Animate::Create(&NameLowerLine->ImageColor, 0.125, DEFAULT_TEXT);
+			Animate::Create(&NameLowerLine->Size.x, 0.125, (float)ProfileName->GetText().size() / ProfileName->maxSymbols);
+		} else {
+			ConfirmName->Active = false;
+			ConfirmName->Visible = false;
+			NameLowerLine->Visible = true;
+			Animate::Create(&NameLowerLine->ImageColor, 0.125, { 200,0,0,255 });
+			Animate::Create(&NameLowerLine->Size.x, 0.125, 1);
+		}
+	});
+
+	new ChangedSignal(FocusedTextBox, [ProfileName, ConfirmName, NameLowerLine]() {
+		if (FocusedTextBox == ProfileName) {
+			if (ProfileName->GetText() == (*getClientPtr())->userName) {
+				ConfirmName->Active = false;
+				ConfirmName->Visible = false;
+				NameLowerLine->Visible = false;
+				return;
+			}
+
+			if (ProfileName->GetText().size()) {
+				ConfirmName->Active = true;
+				ConfirmName->Visible = true;
+				NameLowerLine->Visible = true;
+				Animate::Create(&NameLowerLine->ImageColor, 0.125, DEFAULT_TEXT);
+				Animate::Create(&NameLowerLine->Size.x, 0.125, (float)ProfileName->GetText().size() / ProfileName->maxSymbols);
+			} else {
+				ConfirmName->Active = false;
+				ConfirmName->Visible = false;
+				NameLowerLine->Visible = true;
+				Animate::Create(&NameLowerLine->ImageColor, 0.125, { 200,0,0,255 });
+				Animate::Create(&NameLowerLine->Size.x, 0.125, 1);
+			}
+		} else {
+			NameLowerLine->Visible = true;
+			Animate::Create(&NameLowerLine->ImageColor, 0.125, DEFAULT_TEXT);
+			Animate::Create(&NameLowerLine->Size.x, 0.125, 1);
+		}
+	});
+
+	NameLowerLine->setImage(getImage("textbox_lower_line"));
+	NameLowerLine->Size = { 1, 1 };
+	NameLowerLine->Position = { 0, 0 };
+	NameLowerLine->BackgroundTransparency = 1;
+	NameLowerLine->Overlay = STRETCH;
+	NameLowerLine->ImageColor = DEFAULT_TEXT;
+
+	TextLabel* ProfileLogin = new TextLabel(profileFrame);
+	ProfileLogin->PositionOFFSET = { 100,60 };
+	ProfileLogin->SizeOFFSET = { 280, 25 };
+	ProfileLogin->BackgroundTransparency = 1;
+	ProfileLogin->TextColor = { 180,180,180,180 };
+	ProfileLogin->Text = "@Profile login";
+	ProfileLogin->font = "SegoeB";
+	ProfileLogin->Name = "ProfileLogin";
+	ProfileLogin->TextAnchor = TextAnchorEnum::W;
+
+	return 0;
+}
 
 int settingsUI() {
+	if (settingsAnimationScroll) {
+		return 1;
+	}
+
 	settingsAnimationScroll = new ScrollFrame(StartInstance->findChild("GeneralUI background"));
 	settingsAnimationScroll->Size = { 0, 0.85 };
 	settingsAnimationScroll->SizeOFFSET.x = 350;
@@ -1247,7 +1509,8 @@ int generalUI() {
 	ProfileImage->AnchorPosition = { 0.5,0 };
 	ProfileImage->Position = { 0.5,0 };
 	ProfileImage->BackgroundTransparency = 1;
-	ProfileImage->setImage(getImage("defaultProfileImage"));
+	ProfileImage->setImage(getImage("profile"));
+	ProfileImage->ImageColor = DEFAULT_TEXT;
 	ProfileImage->Roundness = 1;
 	ProfileImage->RoundImage = true;
 	ProfileImage->PositionOFFSET.y = 20;
@@ -1600,7 +1863,7 @@ int generalUI() {
 			for (auto& [id, chat] : LoadedChats) {
 				Object2D* newChat = ChatTemplate->Clone();
 				newChat->setParent(ChatScroll);
-				newChat->Name = long_to_string(chat->ChatID);
+				newChat->Name = std::to_string(chat->ChatID);
 				ImageLabel* icon = static_cast<ImageLabel*>(newChat->findChild("ChatIcon"));
 				TextLabel* name = static_cast<TextLabel*>(newChat->findChild("ChatName"));
 				TextLabel* lastMsg = static_cast<TextLabel*>(newChat->findChild("ChatLastMsg"));
@@ -1622,25 +1885,31 @@ int generalUI() {
 
 	new ChangedSignal<Client*>(*getClientPtr(), [ProfileName, UserID, ProfileImage](){
 		if (*getClientPtr()) {
-			(*getClientPtr())->asyncDataMutex.lock();
+			asyncDataMutex.lock();
+
 			ProfileName->Text = (*getClientPtr())->userName;
 			UserID->Text = "UID: " + std::to_string((*getClientPtr())->userID);
-		
+
+			dynamic_cast<TextBox*>(profileFrame->findChild("ProfileName"))->SetText((*getClientPtr())->userName);
+			dynamic_cast<TextLabel*>(profileFrame->findChild("ProfileLogin"))->Text = "@" + (*getClientPtr())->login;
+
 			if ((*getClientPtr())->avatar.size() <= 1) {
-				ProfileImage->setImage(getImage("defaultProfileImage"));
+				ProfileImage->setImage(getImage("profile"));
+				ProfileImage->ImageColor = DEFAULT_TEXT;
+				ImageLabel* ProfileImage2 = dynamic_cast<ImageLabel*>(profileFrame->findChild("ProfileImage"));
+				ProfileImage2->setImage(getImage("profile"));
+				ProfileImage2->ImageColor = DEFAULT_TEXT;
 			} else {
+				ProfileImage->ImageColor = { 255,255,255,255 };
 				std::vector<unsigned char> icon((*getClientPtr())->avatar.getIcon().second);
 				memcpy(icon.data(), (*getClientPtr())->avatar.getIcon().first, (*getClientPtr())->avatar.getIcon().second);
 				ProfileImage->UpdateWithType(".jpg", icon);
+				ImageLabel* ProfileImage2 = dynamic_cast<ImageLabel*>(profileFrame->findChild("ProfileImage"));
+				ProfileImage->UpdateWithType(".jpg", icon);
+				ProfileImage2->ImageColor = { 255,255,255,255 };
 			}
 
-			/*
-			std::cout << (*getClientPtr())->userName << std::endl;
-			std::cout << (*getClientPtr())->login << std::endl;
-			std::cout << (*getClientPtr())->lastActivity << std::endl;
-			std::cout << (*getClientPtr())->userID << std::endl;
-			*/
-			(*getClientPtr())->asyncDataMutex.unlock();
+			asyncDataMutex.unlock();
 		}
 	});
 
@@ -1651,48 +1920,84 @@ int generalUI() {
 		switch (GlobalStates::UIstate) {
 			case GENERAL: {
 				settingsAnimationScroll->Active = false;
+				profileFrame->Active = false;
 				BackToGeneral->Active = false;
 				LeftMenu->Active = false;
 				Animate::Create(&BackToGeneral->BackgroundTransparency, AnimationTime, 1);
 				Animate::Create(&LeftMenu->PositionOFFSET.x, AnimationTime, -LeftMenu->SizeOFFSET.x);
-				Animate::Create(&settingsFrame->Position.x, 0.1, -0.5, SettingsAnimationType);
+				auto a1 = Animate::Create(&settingsFrame->Position.x, 0.1, 0.5, SettingsAnimationType);
+				a1->Completed = []() {
+					settingsAnimationScroll->Visible = false;
+				};
+				auto a2 = Animate::Create(&profileFrame->SizeOFFSET, 0.15, { 0,0 });
+				a2->Completed = []() {
+					profileFrame->Visible = false;
+				};
 				break;
 			}
 			case LEFT_MENU: {
 				settingsAnimationScroll->Active = false;
+				profileFrame->Active = false;
 				BackToGeneral->Active = true;
 				LeftMenu->Active = true;
 				Animate::Create(&BackToGeneral->BackgroundTransparency, AnimationTime, 0.7);
 				Animate::Create(&LeftMenu->PositionOFFSET.x, AnimationTime, 0);
-				Animate::Create(&settingsFrame->Position.x, 0.1, -0.5, SettingsAnimationType);
+				auto a1 = Animate::Create(&settingsFrame->Position.x, 0.1, 0.5, SettingsAnimationType);
+				a1->Completed = []() {
+					settingsAnimationScroll->Visible = false;
+				};
+				auto a2 = Animate::Create(&profileFrame->SizeOFFSET, 0.15, { 0,0 });
+				a2->Completed = []() {
+					profileFrame->Visible = false;
+				};
 				break;
 			}
 			case AUTH: {
 				settingsAnimationScroll->Active = false;
+				profileFrame->Active = false;
 				BackToGeneral->Active = false;
 				LeftMenu->Active = false;
 				Animate::Create(&BackToGeneral->BackgroundTransparency, AnimationTime, 1);
 				Animate::Create(&LeftMenu->PositionOFFSET.x, AnimationTime, -LeftMenu->SizeOFFSET.x);
-				Animate::Create(&settingsFrame->Position.x, 0.1, -0.5, SettingsAnimationType);
+				auto a1 = Animate::Create(&settingsFrame->Position.x, 0.1, 0.5, SettingsAnimationType);
+				a1->Completed = []() {
+					settingsAnimationScroll->Visible = false;
+				};
+				auto a2 = Animate::Create(&profileFrame->SizeOFFSET, 0.15, { 0,0 });
+				a2->Completed = []() {
+					profileFrame->Visible = false;
+				};
 				break;
 			}
 			case PROFILE: {
 				settingsAnimationScroll->Active = false;
+				profileFrame->Active = true;
+				profileFrame->Visible = true;
 				BackToGeneral->Active = true;
 				LeftMenu->Active = false;
 				Animate::Create(&BackToGeneral->BackgroundTransparency, AnimationTime, 0.7);
 				Animate::Create(&LeftMenu->PositionOFFSET.x, AnimationTime, -LeftMenu->SizeOFFSET.x);
-				Animate::Create(&settingsFrame->Position.x, 0.1, -0.5, SettingsAnimationType);
+				auto a1 = Animate::Create(&settingsFrame->Position.x, 0.1, 0.5, SettingsAnimationType);
+				a1->Completed = []() {
+					settingsAnimationScroll->Visible = false;
+				};
+				auto a2 = Animate::Create(&profileFrame->SizeOFFSET, 0.15, { 400,450 }, Animate::Quad);
 				break;
 			}
 			case SETTINGS: {
 				settingsAnimationScroll->Active = true;
+				settingsAnimationScroll->Visible = true;
+				profileFrame->Active = false;
 				BackToGeneral->Active = true;
 				LeftMenu->Active = false;
 				Animate::Create(&BackToGeneral->BackgroundTransparency, AnimationTime, 0.7);
 				Animate::Create(&LeftMenu->PositionOFFSET.x, AnimationTime, -LeftMenu->SizeOFFSET.x);
 				settingsFrame->Position.x = 1.5;
-				Animate::Create(&settingsFrame->Position.x, 0.1, 0.5, SettingsAnimationType);
+				auto a1 = Animate::Create(&settingsFrame->Position.x, 0.1, 0.5, SettingsAnimationType);
+				auto a2 = Animate::Create(&profileFrame->SizeOFFSET, 0.15, { 0,0 });
+				a2->Completed = []() {
+					profileFrame->Visible = false;
+				};
 				break;
 			}
 		}
@@ -1718,9 +2023,11 @@ void initialInterface() {
 	loadImage("window", "textures/window.png");
 	loadImage("hide", "textures/hide.png");
 	loadImage("list", "textures/list.png");
-	loadImage("defaultProfileImage", "textures/cat.jpg");
 	loadImage("profile", "textures/profile.png");
 	loadImage("settings", "textures/settings.png");
+	loadImage("change_pencil", "textures/pencil.png");
+	loadImage("checked", "textures/checked.png");
+	loadImage("textbox_lower_line", "textures/textbox_lower_line.png");
 
 	int barReturn = initUpperBar();
 	if (barReturn) {
@@ -1744,6 +2051,12 @@ void initialInterface() {
 	if (settingsReturn) {
 		std::cerr << "Error in settingsUI: " << settingsReturn << std::endl;
 		exit(settingsReturn);
+	}
+
+	int profileReturn = profileUI();
+	if (profileReturn) {
+		std::cerr << "Error in profileUI: " << profileReturn << std::endl;
+		exit(profileReturn);
 	}
 
 	start(*StartInstance, { 1200, 800, 0 }, "Nexora", "textures/icon.png", FLAG_WINDOW_UNDECORATED | FLAG_WINDOW_RESIZABLE);
