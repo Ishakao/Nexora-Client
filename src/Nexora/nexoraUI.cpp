@@ -1051,7 +1051,6 @@ int initAuth() {
 	Password2->ClearOnClick = false;
 	Password2->CursorSize = 2;
 	Password2->AllowedSymbols = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz1234567890_!+-=#$%^&*().,/\\`~[]{}";
-
 	TextBox* Password22 = new TextBox(SignUpFrame);
 	Password22->Size = { 0.8, 0.1 };
 	Password22->Position = { 0.45, 0.57 };
@@ -1319,32 +1318,9 @@ int profileUI() {
 
 	TextBox* ProfileName = new TextBox(profileFrame);
 
-	ConfirmName->SetMouse1HoldEnd([ProfileName](Object2D* T) {
-		std::string text = ProfileName->GetText();
-		char* input = new char[text.size() + 1];
-		input[text.size()] = '\0';
-		memcpy(input, text.c_str(), text.size());
-		auto as = new AsyncData(input, UPDATE_NAME, text.size() + 1);
-		as->Completed([input](std::pair<const char*, size_t> data) {
-			delete input;
-
-			if (!data.first) {
-				SendInfoMessage("Name confirm warn", "Something went wrong.\nPlease retry", WARN);
-				return;
-			}
-
-			if (!strcmp(data.first, "e1")) {
-				SendInfoMessage("Name confirm error", "Server error (e1)", ERROR);
-			} else {
-
-			}
-		});
-		as->send();
-	});
-
 	ImageLabel* NameLowerLine = new ImageLabel(ProfileName);
 	ProfileName->PositionOFFSET = { 100,15 };
-	ProfileName->PlaceholderText = "Your public name"
+	ProfileName->PlaceholderText = "Public name";
 	ProfileName->SizeOFFSET = { 255, 45 };
 	ProfileName->BackgroundTransparency = 1;
 	ProfileName->TextColor = mulColor(DEFAULT_TEXT, 0.9);
@@ -1352,7 +1328,7 @@ int profileUI() {
 	ProfileName->maxSymbols = 40;
 	ProfileName->ClearOnClick = false;
 	ProfileName->font = "SegoeB";
-	ProfileName->Name = "ProfileName";
+	ProfileName->Name = "PROFILE_NAME";
 	ProfileName->CursorColor = mulColor(DEFAULT_TEXT, 0.9);
 	ProfileName->TextAnchor = TextAnchorEnum::W;
 	ProfileName->Type = Viewported;
@@ -1377,6 +1353,51 @@ int profileUI() {
 			Animate::Create(&NameLowerLine->ImageColor, 0.125, { 200,0,0,255 });
 			Animate::Create(&NameLowerLine->Size.x, 0.125, 1);
 		}
+	});
+
+	ConfirmName->SetMouse1HoldEnd([ProfileName, ConfirmName, NameLowerLine](Object2D* t) {
+		std::string text = ProfileName->GetText();
+		char* input = new char[text.size() + 1];
+		input[text.size()] = '\0';
+		memcpy(input, text.c_str(), text.size());
+		auto as = new AsyncData(input, UPDATE_NAME, text.size() + 1);
+		as->Completed([input, ConfirmName, NameLowerLine](std::pair<const char*, size_t> data) {
+			delete input;
+
+			if (!data.first) {
+				SendInfoMessage("Name confirm warn", "Something went wrong.\nServer Error", ERROR);
+				return;
+			}
+
+			if (!strcmp(data.first, "e1")) {
+				SendInfoMessage("Name confirm error", "Data error (e1)", WARN);
+			} else if (!strcmp(data.first, "w1")) {
+				SendInfoMessage("Name confirm error", "Wrong name (w1)", WARN);
+			} else {
+				(*getClientPtr())->userName = data.first;
+
+				for (Instance* o : StartInstance->getDescendants([](Instance* i){ return i->Name == "PROFILE_NAME"; })) {
+					if (o->Class == TEXTBOX) {
+						TextBox* obj = dynamic_cast<TextBox*>(o);
+						if (obj) {
+							obj->SetText(data.first);
+						}
+					} else {
+						TextLabel* obj = dynamic_cast<TextLabel*>(o);
+						if (obj) {
+							obj->Text = data.first;
+						}
+					}
+				}
+
+				ConfirmName->Active = false;
+				ConfirmName->Visible = false;
+				NameLowerLine->Visible = false;
+			}
+
+			delete[] data.first;
+		});
+		as->send();
 	});
 
 	new ChangedSignal(FocusedTextBox, [ProfileName, ConfirmName, NameLowerLine]() {
@@ -1527,6 +1548,8 @@ int generalUI() {
 	ProfileName->PositionOFFSET.y = 110;
 	ProfileName->Text = "Profile name";
 	ProfileName->font = "SegoeB";
+	ProfileName->Name = "PROFILE_NAME";
+	ProfileName->MaxVisibleSymbols = 20;
 
 	TextLabel* UserID = new TextLabel(LeftMenu);
 	UserID->BackgroundTransparency = 1;
@@ -1887,13 +1910,13 @@ int generalUI() {
 	new ChangedSignal<Client*>(*getClientPtr(), [ProfileName, UserID, ProfileImage](){
 		if (*getClientPtr()) {
 			asyncDataMutex.lock();
-
+			
 			ProfileName->Text = (*getClientPtr())->userName;
 			UserID->Text = "UID: " + std::to_string((*getClientPtr())->userID);
 
-			dynamic_cast<TextBox*>(profileFrame->findChild("ProfileName"))->SetText((*getClientPtr())->userName);
+			dynamic_cast<TextBox*>(profileFrame->findChild("PROFILE_NAME"))->SetText((*getClientPtr())->userName);
 			dynamic_cast<TextLabel*>(profileFrame->findChild("ProfileLogin"))->Text = "@" + (*getClientPtr())->login;
-
+			
 			if ((*getClientPtr())->avatar.size() <= 1) {
 				ProfileImage->setImage(getImage("profile"));
 				ProfileImage->ImageColor = DEFAULT_TEXT;

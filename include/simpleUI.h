@@ -1751,7 +1751,7 @@ public:
 	void Update() override {
 		if (!Visible) { CursorIndex = -1; CursorVisible = false; Text = ""; return; }
 		if (!(FocusedTextBox == this)) { CursorIndex = -1; CursorVisible = false; deleteText = true; }
-		
+
 		getRealObject2Dsize();
 		getRealObject2Dposition();
 		eventHandler();
@@ -1836,7 +1836,7 @@ public:
 		}
 
 		// KEYBOARD INPUT
-
+		
 		if (FocusedTextBox == this and Visible) {
 			if (maxSymbols >= charOffsets.size()) {
 				std::string layout = getLayout();
@@ -1862,7 +1862,7 @@ public:
 									break;
 								}
 							}
-							if (not allowed) continue;
+							if (!allowed) continue;
 						}
 						updateCharOffsets();
 						int bytePos = (CursorIndex < (int)charOffsets.size()) ? charOffsets[CursorIndex] : Text.size();
@@ -1916,16 +1916,8 @@ public:
 				} else {
 					if (charOffsets.size() > 1) {
 						if (CursorIndex > 0) {
-							for (int i = charOffsets.size() - 1; i >= 0; i--) {
-								if (charOffsets[i] > CursorIndex) continue;
-								int index = charOffsets[i];
-
-								Text = Text.substr(0, index - 1) + Text.substr(index);
-
-								CursorIndex = charOffsets[((i - 1) >= 0 ? i - 1 : 0)];
-								break;
-							}
-
+							Text = Text.substr(0, charOffsets[CursorIndex-1]) + Text.substr(charOffsets[CursorIndex]);
+							CursorIndex--;
 							CursorVisible = true;
 							CursorTime = 0.0f;
 						}
@@ -1958,7 +1950,7 @@ public:
 				if (Text.empty() or CursorIndex == -1) {
 					viewportPosition = 0.0f;
 				} else {
-					std::string textBeforeCursor = Text.substr(0, CursorIndex);
+					std::string textBeforeCursor = Text.substr(0, charOffsets[CursorIndex]);
 					Vector2 textSize = MeasureTextEx(getFont(font), textBeforeCursor.c_str(), textParams.z, Spacing);
 
 					float currentX = textSize.x;
@@ -1991,8 +1983,19 @@ public:
 	}
 
 	void SetText(const std::string& t) {
-		if (t.size() > maxSymbols) {
-			Text = t.substr(0, maxSymbols);
+		std::vector<int> offsets;
+		for (int i = 0; i < t.size();) {
+			unsigned char c = t[i];
+			offsets.push_back(i);
+			if (c < 0x80) i += 1;
+			else if ((c & 0xE0) == 0xC0) i += 2;
+			else if ((c & 0xF0) == 0xE0) i += 3;
+			else if ((c & 0xF8) == 0xF0) i += 4;
+			else i += 1;
+		}
+
+		if (offsets.size() > maxSymbols) {
+			Text = t.substr(0, offsets[maxSymbols]);
 			updateCharOffsets();
 			CursorIndex = maxSymbols;
 			return;
