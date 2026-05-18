@@ -1,15 +1,15 @@
 #ifdef _WIN32
-	#define _WINSOCK_DEPRECATED_NO_WARNINGS
-	#include <winsock2.h>
-	#include <WS2tcpip.h>
-	#pragma comment(lib, "Ws2_32.lib")
+#define _WINSOCK_DEPRECATED_NO_WARNINGS
+#include <winsock2.h>
+#include <WS2tcpip.h>
+#pragma comment(lib, "Ws2_32.lib")
 #elif __linux__
-	#include <sys/socket.h>
-	#include <netinet/in.h>
-	#include <arpa/inet.h>
-	#include <unistd.h>
-	#include <signal.h>
-	using SOCKET = uint64_t;
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+#include <unistd.h>
+#include <signal.h>
+using SOCKET = uint64_t;
 #endif
 
 #include <openssl/ssl.h>
@@ -121,7 +121,7 @@ int send_exact(const char* buf, size_t payload) {
 	send_mutex.lock();
 
 	while (sended < payload) {
-		
+
 		int l = SSL_write(clientData::SSL_Data, buf + sended, ((payload - sended < clientData::maxBuffer) ? payload - sended : clientData::maxBuffer));
 
 		if (l > 0) {
@@ -207,18 +207,21 @@ void data_reader() {
 
 				if (prom) {
 					prom->set_value({ buf, outputHeader.payload });
-				} else {
+				}
+				else {
 					if (asyncReaderFunction) {
 						asyncReaderMutex.lock();
-						asyncReaderFunction({outputHeader, { buf, outputHeader.payload } });
+						asyncReaderFunction({ outputHeader, { buf, outputHeader.payload } });
 						asyncReaderMutex.unlock();
-					} else {
+					}
+					else {
 						delete[] buf;
 					}
 				}
 			}
-		});
-	} catch (const char* ex) {
+			});
+	}
+	catch (const char* ex) {
 		std::cout << "Exception: " << ex << std::endl;
 	}
 }
@@ -252,7 +255,7 @@ std::pair<const char*, size_t> get_data(const char* inputData, QueryType type, s
 
 	data_mutex.lock();
 	int send_err1 = send_exact((char*)&inputHeader, sizeof(inputHeader));
-	
+
 	if (send_err1 == -1) {
 		std::cout << "fatal error 1" << std::endl;
 		data_mutex.unlock();

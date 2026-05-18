@@ -3,9 +3,10 @@
 
 #ifdef _WIN32
 	#include <windows.h>
+	#include <commdlg.h>
 #elif defined(__linux__)
 	#include <X11/XKBlib.h>
-
+	#include <gtk/gtk.h>
 	inline Display* d = XOpenDisplay(nullptr);
 	Window root = DefaultRootWindow(d);
 #endif
@@ -75,3 +76,62 @@ float GetMouseScreenPositionY() {
 		return (float)root_y;
 	#endif
 }
+
+#ifdef _WIN32
+	std::wstring GetFile() {
+		wchar_t filename[MAX_PATH] = L"";
+
+		OPENFILENAME ofn;
+		ZeroMemory(&ofn, sizeof(ofn));
+
+		ofn.lStructSize = sizeof(ofn);
+		ofn.lpstrFile = filename;
+		ofn.nMaxFile = MAX_PATH;
+		ofn.lpstrFilter = ofn.lpstrFilter = L"Images (*.jpg;*.jpeg;*.png)\0*.jpg;*.jpeg;*.png\0All files (*.*)\0*.*\0";;
+		ofn.Flags = OFN_PATHMUSTEXIST | OFN_FILEMUSTEXIST;
+
+		if (GetOpenFileName(&ofn)) {
+			return std::wstring(filename);
+		}
+
+		return L"";
+	}
+#elif __linux__
+	std::string GetFile() {
+		gtk_init(NULL, NULL);
+
+		GtkWidget* dialog = gtk_file_chooser_dialog_new(
+			"Open Image",
+			NULL,
+			GTK_FILE_CHOOSER_ACTION_OPEN,
+			"Cancel", GTK_RESPONSE_CANCEL,
+			"Open", GTK_RESPONSE_ACCEPT,
+			NULL
+		);
+
+		GtkFileChooser* chooser = GTK_FILE_CHOOSER(dialog);
+
+		GtkFileFilter* filter = gtk_file_filter_new();
+		gtk_file_filter_set_name(filter, "Images (*.jpg, *.jpeg, *.png)");
+		gtk_file_filter_add_pattern(filter, "*.jpg");
+		gtk_file_filter_add_pattern(filter, "*.jpeg");
+		gtk_file_filter_add_pattern(filter, "*.png");
+
+		gtk_file_chooser_add_filter(chooser, filter);
+
+		std::string result;
+
+		if (gtk_dialog_run(GTK_DIALOG(dialog)) == GTK_RESPONSE_ACCEPT)
+		{
+			char* filename = gtk_file_chooser_get_filename(chooser);
+			if (filename)
+			{
+				result = filename;
+				g_free(filename);
+			}
+		}
+
+		gtk_widget_destroy(dialog);
+		return result;
+	}
+#endif

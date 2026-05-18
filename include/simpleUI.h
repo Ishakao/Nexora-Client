@@ -44,7 +44,7 @@ Color mulColor(Color other, float t) {
 }
 
 float sui_lerp(float a, float b, float t) {
-	return a + (b-a) * t;
+	return a + (b - a) * t;
 }
 
 int winWidth = 0;
@@ -118,8 +118,8 @@ namespace Tasks {
 }
 
 struct IChangedSignal {
-    virtual ~IChangedSignal() = default;
-    virtual void Update() = 0;
+	virtual ~IChangedSignal() = default;
+	virtual void Update() = 0;
 };
 
 std::vector<IChangedSignal*> ActiveSignals;
@@ -158,12 +158,21 @@ public:
 
 namespace Animate {
 	enum Function {
-		Linear = 0,
+		Linear,
+
+		Smooth,
+
 		Quad,
 		Cube,
-		Exponential,
+		Quart,
+		Quint,
+
 		Sine,
-		Circular
+		Circular,
+		Exponential,
+
+		Back,
+		Bounce
 	};
 
 	enum Ease {
@@ -173,26 +182,55 @@ namespace Animate {
 
 	float getTime(Function f, Ease e, float t) {
 		t = std::clamp(t, 0.0f, 1.0f);
+
 		if (f == Linear) { return t; }
+
 		if (f == Quad) {
 			if (e == In) { return t * t; }
-			else { return 1 - (1 - t) * (1 - t); }
+			else { float a = 1.0f - t; return 1.0f - a * a; }
 		}
+
 		if (f == Cube) {
 			if (e == In) { return t * t * t; }
-			else { return 1 - (1 - t) * (1 - t) * (1 - t); }
+			else { float a = 1.0f - t; return 1.0f - a * a * a; }
 		}
+
 		if (f == Exponential) {
-			if (e == In) { return (t == 0) ? t : powf(2, 10 * (t - 1)); }
-			else { return (t == 1) ? 1 : (1 - powf(2, -10 * t)); }
+			const float k = 6.0f;
+
+			if (e == In) {
+				return (expf(k * t) - 1.0f) / (expf(k) - 1.0f);
+			} else {
+				return 1.0f - (expf(k * (1.0f - t)) - 1.0f) / (expf(k) - 1.0f);
+			}
 		}
+
 		if (f == Sine) {
-			if (e == In) { return 1 - cos((PI * t) / 2); }
-			else { return sin((PI * t) / 2); }
+			if (e == In) { return 1.0f - cosf((PI * t) / 2.0f); }
+			else { return sinf((PI * t) / 2.0f); }
 		}
+
 		if (f == Circular) {
-			if (e == In) { return 1 - sqrt(1 - t * t); }
-			else { return sqrt(1 - (t - 1) * (t - 1)); }
+			if (e == In) { return 1.0f - sqrtf(1.0f - t * t); }
+			else { float a = t - 1.0f; return sqrtf(1.0f - a * a); }
+		}
+
+		if (f == Bounce) {
+			auto bounceOut = [](float x) -> float {
+				const float n1 = 7.5625f;
+				const float d1 = 2.75f;
+
+				if (x < 1.0f / d1) return n1 * x * x;
+				else if (x < 2.0f / d1) { x -= 1.5f / d1; return n1 * x * x + 0.75f; }
+				else if (x < 2.5f / d1) { x -= 2.25f / d1; return n1 * x * x + 0.9375f; }
+				else { x -= 2.625f / d1; return n1 * x * x + 0.984375f; }
+			};
+
+			if (e == In) {
+				return 1.0f - bounceOut(1.0f - t);
+			} else {
+				return bounceOut(t);
+			}
 		}
 
 		return t;
@@ -507,7 +545,7 @@ public:
 	}
 
 	Instance* findFirstDescendantOfClass(InstanceType cls) {
-		std::function<Instance*(Instance*)> l = [=](Instance* ptr) -> Instance* {
+		std::function<Instance* (Instance*)> l = [=](Instance* ptr) -> Instance* {
 			for (Instance* child : ptr->Children) {
 				if (child->Class == cls) {
 					return child;
@@ -521,7 +559,7 @@ public:
 			}
 
 			return nullptr;
-		};
+			};
 
 		return l(this);
 	}
@@ -548,7 +586,7 @@ public:
 		return l(this);
 	}
 
-	std::vector<Instance*> getDescendants(const std::function<bool(Instance*)>& condition = [](Instance* _)  { return true; }) {
+	std::vector<Instance*> getDescendants(const std::function<bool(Instance*)>& condition = [](Instance* _) { return true; }) {
 		std::vector<Instance*> out;
 
 		std::function<void(Instance*)> l = [&](Instance* ptr) {
@@ -559,7 +597,7 @@ public:
 
 				l(child);
 			}
-		};
+			};
 
 		l(this);
 
@@ -703,7 +741,7 @@ public:
 	Folder() = delete;
 };
 
-Vector2 getCanvasPosition(Object2D*); 
+Vector2 getCanvasPosition(Object2D*);
 Vector2 getScrollFrameRS(Instance*);
 Vector2 getScrollFrameRP(Instance*);
 bool isScrollFrameCropping(Instance*);
@@ -755,7 +793,8 @@ public:
 				MouseEntered = true;
 				if (functionForMouseEnter) functionForMouseEnter(this);
 			}
-		} else {
+		}
+		else {
 			if ((MouseEntered and !Visible) or ((higherObject != this) or CanBeEnteredIfNotHigher)) {
 				MouseEntered = false;
 				if (functionForMouseLeave) functionForMouseLeave(this);
@@ -788,7 +827,7 @@ public:
 
 		if (functionForTick) functionForTick();
 	}
-	
+
 	Vector2 PositionOFFSET = {};
 	Vector2 SizeOFFSET = {};
 	Vector2 AnchorPositionOFFSET = {};
@@ -887,7 +926,8 @@ public:
 				Vector2 canvasPx = getCanvasPosition(obj);
 				posPx.x = parentPosPx.x + myLocalPx.x - canvasPx.x * dynamic_cast<Object2D*>(current)->RealSize.x;
 				posPx.y = parentPosPx.y + myLocalPx.y - canvasPx.y * dynamic_cast<Object2D*>(current)->RealSize.y;
-			} else {
+			}
+			else {
 				posPx.x = parentPosPx.x + myLocalPx.x;
 				posPx.y = parentPosPx.y + myLocalPx.y;
 			}
@@ -932,7 +972,7 @@ public:
 			}
 		}
 	}
-	
+
 	bool pointInObject(Vector2 pos) {
 		Vector2 mouse = GetMouseScreenPosition();
 		Vector2 windowPos = GetWindowPosition();
@@ -953,11 +993,12 @@ public:
 					scrRP.y > pos.y or scrRP.y + scrRS.y < pos.y) {
 					return false;
 				}
-			} else {
+			}
+			else {
 				if (pos.x >= RealPos.x and pos.x <= RealPos.x + RealSize.x and pos.y >= RealPos.y and pos.y <= RealPos.y + RealSize.y) return true;
 			}
 		}
-		
+
 		if (pos.x >= RealPos.x and pos.x <= RealPos.x + RealSize.x and pos.y >= RealPos.y and pos.y <= RealPos.y + RealSize.y) return true;
 
 		return false;
@@ -1116,7 +1157,7 @@ void updateChildren(Instance* parent) {
 		if (az) return true;
 		if (bz) return false;
 		return true;
-	});
+		});
 }
 
 Font getFont(const std::string& name) {
@@ -1228,14 +1269,14 @@ public:
 			updateChildren(this);
 		}
 
-		if (CanvasPosition.x + 1 > CanvasSize.x) 
+		if (CanvasPosition.x + 1 > CanvasSize.x)
 			CanvasPosition.x = (CanvasSize.x - 1 > 0 ? CanvasSize.x - 1 : 0);
-		if (CanvasPosition.y + 1 > CanvasSize.y) 
+		if (CanvasPosition.y + 1 > CanvasSize.y)
 			CanvasPosition.y = (CanvasSize.y - 1 > 0 ? CanvasSize.y - 1 : 0);
-		
-		if (CanvasPosition.x < 0) 
+
+		if (CanvasPosition.x < 0)
 			CanvasPosition.x = 0;
-		if (CanvasPosition.y < 0) 
+		if (CanvasPosition.y < 0)
 			CanvasPosition.y = 0;
 
 		if (pointInObject(GetMousePosition()) and ScrollEnabled) {
@@ -1244,15 +1285,18 @@ public:
 				if (Direction == 'Y' or (!IsKeyDown(KEY_LEFT_SHIFT) and Direction == 'B')) {
 					float newY = CanvasPosition.y - ScrollSpeed; if (newY < 0) newY = 0;
 					Animate::Create(&CanvasPosition.y, 0.125, newY);
-				} else if (Direction == 'X' or (IsKeyDown(KEY_LEFT_SHIFT) and Direction == 'B')) {
+				}
+				else if (Direction == 'X' or (IsKeyDown(KEY_LEFT_SHIFT) and Direction == 'B')) {
 					float newX = CanvasPosition.x - ScrollSpeed; if (newX < 0) newX = 0;
 					Animate::Create(&CanvasPosition.x, 0.125, newX);
 				}
-			} else if (WheelMove < 0) {
+			}
+			else if (WheelMove < 0) {
 				if (Direction == 'Y' or (!IsKeyDown(KEY_LEFT_SHIFT) and Direction == 'B')) {
-					float newY = CanvasPosition.y + ScrollSpeed; if (newY -1 > CanvasSize.y) newY = 0;
+					float newY = CanvasPosition.y + ScrollSpeed; if (newY - 1 > CanvasSize.y) newY = 0;
 					Animate::Create(&CanvasPosition.y, 0.125, newY);
-				} else if (Direction == 'X' or (IsKeyDown(KEY_LEFT_SHIFT) and Direction == 'B')) {
+				}
+				else if (Direction == 'X' or (IsKeyDown(KEY_LEFT_SHIFT) and Direction == 'B')) {
 					float newX = CanvasPosition.x + ScrollSpeed; if (newX - 1 > CanvasSize.x) newX = 0;
 					Animate::Create(&CanvasPosition.x, 0.125, newX);
 				}
@@ -1338,17 +1382,18 @@ class TextLabel : public Object2D {
 			size_t idx = charOffsets[std::max(3, MaxVisibleSymbols) - 3];
 			visibleText = Text.substr(0, idx);
 			visibleText += "...";
-		} else {
+		}
+		else {
 			visibleText = Text;
 		}
-		
+
 		textParams = getTextCFrame(visibleText.c_str(), getFont(font), { RealPos.x, RealPos.y, RealSize.x, RealSize.y }, TextAnchor, TextSize, Spacing);
 		lastRealSize = RealSize;
 		lastText = Text;
 		lastFont = font;
 		lastParams = textParams;
 		lastMaxVisible = MaxVisibleSymbols;
-		
+
 		newSize = MeasureTextEx(getFont(font), visibleText.c_str(), textParams.z, Spacing);
 
 		if (cachedText.id == 0 or lastNewSize.x < newSize.x or lastNewSize.y < newSize.y) {
@@ -1358,13 +1403,13 @@ class TextLabel : public Object2D {
 			cachedText = LoadRenderTexture(newSize.x * TextTextureUpdateAspect, newSize.y * TextTextureUpdateAspect);
 			lastNewSize = { newSize.x * TextTextureUpdateAspect, newSize.y * TextTextureUpdateAspect };
 		}
-		
+
 		bool hadClip = !clipStack.empty();
 		Clip current;
 		if (hadClip) current = clipStack.back();
 
 		if (hadClip) EndScissorMode();
-		
+
 		BeginTextureMode(cachedText);
 		ClearBackground(BLANK);
 		DrawTextEx(getFont(font), visibleText.c_str(), { 0,0 }, textParams.z, Spacing, { 255,255,255,255 });
@@ -1392,8 +1437,8 @@ public:
 				return;
 			}
 
-			ScrollFrame* ancestor = nullptr; 
-			Instance* c = findFirstAncestorOfClass(SCROLLFRAME); 
+			ScrollFrame* ancestor = nullptr;
+			Instance* c = findFirstAncestorOfClass(SCROLLFRAME);
 			if (c) ancestor = dynamic_cast<ScrollFrame*>(c);
 			if (ancestor and ancestor->CropDescendants) {
 				if (RealPos.x + RealSize.x + BorderThickness < ancestor->RealPos.x or
@@ -1408,7 +1453,8 @@ public:
 
 			if (lastParams.z != textParams.z or cachedText.id == 0 or lastText != Text or lastFont != font or lastMaxVisible != MaxVisibleSymbols) {
 				updateTexture();
-			} else {
+			}
+			else {
 				if (std::fabsf(lastRealSize.x - RealSize.x) >= TextTextureUpdateAspect or std::fabsf(lastRealSize.y - RealSize.y) >= TextTextureUpdateAspect) {
 					lastRealSize = RealSize;
 					newSize = MeasureTextEx(getFont(font), visibleText.c_str(), textParams.z, Spacing);
@@ -1440,7 +1486,7 @@ public:
 		i->cachedText.id = 0;
 		i->cachedText.texture.id = 0;
 		i->updateTexture();
-			
+
 		return i;
 	}
 
@@ -1597,7 +1643,8 @@ class TextBox : public Object2D {
 
 		if (Text != "") {
 			newSize = MeasureTextEx(getFont(font), Text.c_str(), textParams.z, Spacing);
-		} else {
+		}
+		else {
 			if (CursorIndex == -1 or FocusedTextBox != this) {
 				newSize = MeasureTextEx(getFont(font), PlaceholderText.c_str(), textParams.z, Spacing);
 			}
@@ -1625,14 +1672,16 @@ class TextBox : public Object2D {
 			std::string t;
 			if (HideText == '\0') {
 				t = Text;
-			} else {
+			}
+			else {
 				for (int i = 0; i < Text.size(); i++) {
 					t += HideText;
 				}
 			}
 
-			DrawTextEx(getFont(font), t.c_str(), {0,0}, textParams.z, Spacing, {255,255,255,255});
-		} else {
+			DrawTextEx(getFont(font), t.c_str(), { 0,0 }, textParams.z, Spacing, { 255,255,255,255 });
+		}
+		else {
 			if (CursorIndex == -1 or FocusedTextBox != this) {
 				DrawTextEx(getFont(font), PlaceholderText.c_str(), { 0,0 }, textParams.z, Spacing, { 255,255,255,255 });
 			}
@@ -1682,17 +1731,20 @@ public:
 
 		if (lastType != Type or cachedText.id == 0 or lastHideText != HideText or lastParams.x != textParams.x or lastParams.y != textParams.y or lastParams.z != textParams.z or lastFont != font or (FocusedTextBox == this and lastFocused != this) or (lastFocused == this and FocusedTextBox != this)) {
 			updateTexture();
-		} else if (lastText != Text) {
+		}
+		else if (lastText != Text) {
 			updateTexture();
 			if (TextChanged) {
 				TextChanged(this);
 			}
-		} else {
+		}
+		else {
 			if (lastRealSize.x != RealSize.x or lastRealSize.y != RealSize.y) {
 				updateTextParams();
 				if (Text == "") {
 					newSize = MeasureTextEx(getFont(font), PlaceholderText.c_str(), textParams.z, Spacing);
-				} else {
+				}
+				else {
 					newSize = MeasureTextEx(getFont(font), Text.c_str(), textParams.z, Spacing);
 				}
 			}
@@ -1705,14 +1757,15 @@ public:
 
 			Vector2 sizeToDraw = (Type == Viewported) ? RealSize : newSize;
 
-			Rectangle sourceRec = { (Type == Viewported) ? viewportPosition : 0.0f, (cachedText.texture.height - sizeToDraw.y), sizeToDraw.x, -sizeToDraw.y};
+			Rectangle sourceRec = { (Type == Viewported) ? viewportPosition : 0.0f, (cachedText.texture.height - sizeToDraw.y), sizeToDraw.x, -sizeToDraw.y };
 			Rectangle destRec = { RealPos.x + textParams.x, RealPos.y + textParams.y, sizeToDraw.x, sizeToDraw.y };
 			Vector2 origin = { 0, 0 };
 
 			Color clr;
 			if (Text == "") {
 				clr = { PlaceholderTextColor.r, PlaceholderTextColor.g, PlaceholderTextColor.b, (unsigned char)(PlaceholderTextColor.a * (1 - TextTransparency)) };
-			} else {
+			}
+			else {
 				clr = { TextColor.r, TextColor.g, TextColor.b, (unsigned char)(TextColor.a * (1 - TextTransparency)) };
 			}
 
@@ -1785,7 +1838,8 @@ public:
 
 				if (higherObject and higherObject->Class == TEXTBOX) {
 					FocusedTextBox = static_cast<TextBox*>(higherObject);
-				} else {
+				}
+				else {
 					FocusedTextBox = nullptr;
 				}
 			}
@@ -1811,7 +1865,8 @@ public:
 					for (int i = 0; i < Text.size(); i++) {
 						textBeforeCursor += HideText;
 					}
-				} else {
+				}
+				else {
 					textBeforeCursor = Text;
 				}
 
@@ -1829,14 +1884,15 @@ public:
 						}
 						CursorIndex = i;
 					}
-				} else {
+				}
+				else {
 					CursorIndex = 0;
 				}
 			}
 		}
 
 		// KEYBOARD INPUT
-		
+
 		if (FocusedTextBox == this and Visible) {
 			if (maxSymbols >= charOffsets.size()) {
 				std::string layout = getLayout();
@@ -1875,71 +1931,135 @@ public:
 			}
 		}
 
-		// UTILS (BACKSPACE | DEL | CTRL BACKSPACE | ARROWS
+		// UTILS (BACKSPACE | DEL | CTRL BACKSPACE | ARROWS)
 		if (FocusedTextBox == this and Visible) {
-			if (IsKeyPressed(KEY_BACKSPACE) or IsKeyPressed(KEY_DELETE)) {
+			if (IsKeyPressed(KEY_BACKSPACE)) {
 				if (IsKeyDown(KEY_LEFT_CONTROL)) {
-					if (CursorIndex == 0) return;
+					if (CursorIndex > 0) {
+						int start = CursorIndex;
+						while (start > 0) {
+							unsigned char c = Text[charOffsets[start - 1]];
 
-					int lower = CursorIndex;
-					bool Space = false;
-					bool first = true;
+							if (c != ' ')
+								break;
 
-					for (int i = charOffsets.size() - 1; i >= 0; i--) {
-						if (charOffsets[i] > CursorIndex) continue;
-						int index = charOffsets[i];
-						unsigned char c = Text[index];
-
-						if (c == '.' or c == ',' or c == ':' or c == ';' or c == '?' or c == '!' or c == '/' or c == '\\' or c == '\'' or c == '\"' or c == '`' or c == '~') {
-							lower = index;
-							break;
-						}
-						else if ((c == ' ' and first)) {
-							Space = true;
-							continue;
-						}
-						else if (c == ' ' and not Space) {
-							break;
-						}
-						else if (c != ' ' and Space) {
-							Space = false;
+							start--;
 						}
 
-						first = false;
+						if (start > 0) {
+							unsigned char c = Text[charOffsets[start - 1]];
 
-						lower = index;
-						CursorVisible = true; CursorTime = 0.0f;
+							if (c == '.' or c == ',' or c == ':' or
+								c == ';' or c == '?' or c == '!' or
+								c == '/' or c == '\\' or c == '\'' or
+								c == '\"') {
+								start--;
+							} else {
+								while (start > 0) {
+									c = Text[charOffsets[start - 1]];
+
+									if (c == ' ' or c == '.' or c == ',' or
+										c == ':' or c == ';' or c == '?' or
+										c == '!' or c == '/' or c == '\\' or
+										c == '\'' or c == '\"')
+									{
+										break;
+									}
+
+									start--;
+								}
+							}
+						}
+
+						Text = Text.substr(0, charOffsets[start]) + Text.substr(charOffsets[CursorIndex]);
+						CursorIndex = start;
+
+						updateCharOffsets();
 					}
-
-					Text = Text.substr(0, lower);
-					updateCharOffsets();
 				} else {
-					if (charOffsets.size() > 1) {
-						if (CursorIndex > 0) {
-							Text = Text.substr(0, charOffsets[CursorIndex-1]) + Text.substr(charOffsets[CursorIndex]);
-							CursorIndex--;
-							CursorVisible = true;
-							CursorTime = 0.0f;
-						}
-					} else {
-						CursorIndex = 0;
-						Text = "";
+					if (CursorIndex > 0) {
+						Text = Text.substr(0, charOffsets[CursorIndex - 1]) + Text.substr(charOffsets[CursorIndex]);
+						CursorIndex--;
+
+						updateCharOffsets();
 					}
+				}
+
+				CursorVisible = true;
+				CursorTime = 0.0f;
+			}
+
+			if (IsKeyPressed(KEY_DELETE)) {
+				if (CursorIndex < (int)charOffsets.size() - 1) {
+					Text = Text.substr(0, charOffsets[CursorIndex]) + Text.substr(charOffsets[CursorIndex + 1]);
 
 					updateCharOffsets();
 				}
+
+				CursorVisible = true;
+				CursorTime = 0.0f;
 			}
 
 			if (IsKeyPressed(KEY_LEFT)) {
-				int z = CursorIndex - 1; if (z < 0) z = 0;
-				CursorIndex = z;
-				CursorVisible = true; CursorTime = 0.0f;
+				if (IsKeyDown(KEY_LEFT_CONTROL)) {
+					while (CursorIndex > 0) {
+						unsigned char c = Text[charOffsets[CursorIndex - 1]];
+
+						if (c != ' ')
+							break;
+
+						CursorIndex--;
+					}
+
+					while (CursorIndex > 0) {
+						unsigned char c = Text[charOffsets[CursorIndex - 1]];
+
+						if (c == ' ')
+							break;
+
+						CursorIndex--;
+					}
+				} else {
+					CursorIndex--;
+				}
+
+				if (CursorIndex < 0)
+					CursorIndex = 0;
+
+				CursorVisible = true;
+				CursorTime = 0.0f;
 			}
 
 			if (IsKeyPressed(KEY_RIGHT)) {
-				int z = CursorIndex + 1; if (z > charOffsets.size() - 1) z = charOffsets.size() - 1;
-				CursorIndex = z;
-				CursorVisible = true; CursorTime = 0.0f;
+				int maxIndex = (int)charOffsets.size() - 1;
+
+				if (IsKeyDown(KEY_LEFT_CONTROL)) {
+					while (CursorIndex < maxIndex) {
+						unsigned char c = Text[charOffsets[CursorIndex]];
+
+						if (c == ' ')
+							break;
+
+						CursorIndex++;
+					}
+
+					while (CursorIndex < maxIndex) {
+						unsigned char c = Text[charOffsets[CursorIndex]];
+
+						if (c != ' ')
+							break;
+
+						CursorIndex++;
+					}
+				} else {
+					CursorIndex++;
+				}
+
+				if (CursorIndex > maxIndex)
+					CursorIndex = maxIndex;
+
+				CursorVisible = true;
+				CursorTime = 0.0f;
 			}
 		}
 
@@ -1980,6 +2100,11 @@ public:
 		if (cachedText.id != 0) {
 			UnloadRenderTexture(cachedText);
 		}
+	}
+
+	size_t size() {
+		updateCharOffsets();
+		return charOffsets.size();
 	}
 
 	void SetText(const std::string& t) {
@@ -2030,7 +2155,7 @@ public:
 	}
 
 	TextBox(bool a) : Object2D(a) { Name = DefaultName; Class = DefaultClass; Active = true; }
-	TextBox(Instance* p) :  Object2D(p) { Name = DefaultName; Class = DefaultClass; Active = true; }
+	TextBox(Instance* p) : Object2D(p) { Name = DefaultName; Class = DefaultClass; Active = true; }
 
 	TextBox() = delete;
 };
@@ -2118,7 +2243,7 @@ public:
 		}
 
 		if (tex.id) {
-			Rectangle destRec = { RealPos.x+Origin.x, RealPos.y+Origin.y, RealSize.x, RealSize.y };
+			Rectangle destRec = { RealPos.x + Origin.x, RealPos.y + Origin.y, RealSize.x, RealSize.y };
 			Rectangle srcRec = { 0, 0, image.width, image.height };
 
 			if (Overlay == FIT) {
@@ -2129,12 +2254,14 @@ public:
 					float scaledHeight = RealSize.x / imageAspect;
 					destRec.y += (RealSize.y - scaledHeight) / 2.0f;
 					destRec.height = scaledHeight;
-				} else {
+				}
+				else {
 					float scaledWidth = RealSize.y * imageAspect;
 					destRec.x += (RealSize.x - scaledWidth) / 2.0f;
 					destRec.width = scaledWidth;
 				}
-			} else if (Overlay == CROP) {
+			}
+			else if (Overlay == CROP) {
 				float imageAspect = (float)image.width / image.height;
 				float rectAspect = RealSize.x / RealSize.y;
 
@@ -2142,7 +2269,8 @@ public:
 					float cropWidth = image.height * rectAspect;
 					srcRec.x = (image.width - cropWidth) / 2.0f;
 					srcRec.width = cropWidth;
-				} else {
+				}
+				else {
 					float cropHeight = image.width / rectAspect;
 					srcRec.y = (image.height - cropHeight) / 2.0f;
 					srcRec.height = cropHeight;
@@ -2162,11 +2290,12 @@ public:
 					lastRoundness = Roundness;
 					SetShaderValue(shader, GetShaderLocation(shader, "roundness"), &Roundness, SHADER_UNIFORM_FLOAT);
 				}
-				
+
 				BeginShaderMode(shader);
 				DrawTexturePro(tex, srcRec, destRec, Origin, Rotation, { ImageColor.r, ImageColor.g, ImageColor.b, (unsigned char)(ImageColor.a * (1 - ImageTransparency)) });
 				EndShaderMode();
-			} else {
+			}
+			else {
 				DrawTexturePro(tex, srcRec, destRec, Origin, Rotation, { ImageColor.r, ImageColor.g, ImageColor.b, (unsigned char)(ImageColor.a * (1 - ImageTransparency)) });
 			}
 		}
@@ -2174,7 +2303,7 @@ public:
 
 	void UpdateWithType(const std::string& type, std::vector<unsigned char>& data) {
 		if (imageOwner and image.data) UnloadImage(image);
-		
+
 		image = LoadImageFromMemory(type.c_str(), data.data(), data.size());
 
 		if (image.data == nullptr) return;
@@ -2262,7 +2391,7 @@ public:
 	void Draw() override {
 		if (Visible) {
 			Object2D::Draw();
-			
+
 			if (imageLoadedWhileNotReady) {
 				imageLoadedWhileNotReady = false;
 
@@ -2298,7 +2427,7 @@ public:
 				UnloadImage(img);
 			}
 		}
-		
+
 		img = LoadImageFromMemory(type.c_str(), data.data(), data.size());
 
 		if (img.data == nullptr) return;
@@ -2312,7 +2441,8 @@ public:
 			GenTextureMipmaps(&texture);
 			SetTextureFilter(texture, TEXTURE_FILTER_TRILINEAR);
 			UnloadImage(img);
-		} else {
+		}
+		else {
 			imageLoadedWhileNotReady = true;
 		}
 	}
@@ -2348,7 +2478,7 @@ public:
 
 std::vector<unsigned char> ImageToJpgBytes(const std::string& path, int quality = 90) {
 	Image img = LoadImage(path.c_str());
-	
+
 	ImageFormat(&img, PIXELFORMAT_UNCOMPRESSED_R8G8B8);
 
 	std::vector<unsigned char> out;
@@ -2385,14 +2515,14 @@ void toggleFPS(Instance* s, Color textColor = { 0,0,0,255 }) {
 		labelFPS = new TextLabel(s);
 		labelFPS->BackgroundTransparency = 1;
 		labelFPS->TextSize = -1;
-		new ChangedSignal(accurateFPS, []() { 
-			static int last = 0; 
+		new ChangedSignal(accurateFPS, []() {
+			static int last = 0;
 			if (last != accurateFPS) {
 				std::ostringstream os;
 				os << accurateFPS << " FPS";
 				labelFPS->Text = os.str();
 			}
-		});
+			});
 		labelFPS->Name = "FPS_LABEL";
 		labelFPS->Active = false;
 		labelFPS->Size = { 0.15, 0.1 };
@@ -2788,7 +2918,7 @@ namespace debug {
 					}
 				}
 			}
-		});
+			});
 
 		new ChangedSignal<int>(currentFPSindex, [FPSquantity]() { SetTargetFPS((typeFPS[currentFPSindex] == 0) ? GetMonitorRefreshRate(GetCurrentMonitor()) : typeFPS[currentFPSindex]); std::ostringstream s; s << " " << typeFPS[currentFPSindex] << " "; FPSquantity->Text = (currentFPSindex == 2 ? "FULL" : ((currentFPSindex == 3) ? "V-SYNC" : s.str())); });
 		new ChangedSignal<bool>(Animations, [AnimButton]() { AnimButton->BackgroundColor = Animations ? Color{ 204, 255, 204, 255 } : Color{ 255, 204, 204, 255 }; AnimButton->Text = Animations ? " On " : " Off "; });
@@ -2885,24 +3015,24 @@ void SUI_SetWindowSize(int newW, int newH) {
 }
 
 void SUI_SetWindowPosition(int newX, int newY) {
-	#ifdef __linux__
-		SetWindowPosition(newX, newY);
-	#elif _WIN32
-		SetWindowPosition(newX, newY);
-	#endif
+#ifdef __linux__
+	SetWindowPosition(newX, newY);
+#elif _WIN32
+	SetWindowPosition(newX, newY);
+#endif
 }
 
-void start(Instance& StartInstance, Vector3 inf, const char* name, const char* iconName="", unsigned int flags = 4) {
+void start(Instance& StartInstance, Vector3 inf, const char* name, const char* iconName = "", unsigned int flags = 4) {
 	SetConfigFlags(flags);
 	SetTraceLogLevel(LOG_NONE);
 
 	winWidth = inf.x;
 	winHeight = inf.y;
-	
+
 	InitWindow(inf.x, inf.y, name);
 	SetTargetFPS((inf.z <= 0) ? GetMonitorRefreshRate(GetCurrentMonitor()) : inf.z);
 	if (iconName != "") SetWindowIcon(LoadImage(iconName));
-	
+
 	SetExitKey(KEY_NULL);
 	createFont("Arial", "Fonts/arial.ttf", 100);
 	createFont("rog", "Fonts/rogFont.otf", 50);
@@ -2916,13 +3046,13 @@ void start(Instance& StartInstance, Vector3 inf, const char* name, const char* i
 	while (programRunning and !WindowShouldClose()) {
 		if (IsWindowFullscreen()) ToggleFullscreen();
 		if (changeWindowSizeB) {
-			#ifdef __linux__
-				SetWindowSize(changeWindowSize.x, changeWindowSize.y);
-				changeWindowSizeB = false;
-			#elif _WIN32
-				SetWindowSize(changeWindowSize.x, changeWindowSize.y);
-				changeWindowSizeB = false;
-			#endif
+#ifdef __linux__
+			SetWindowSize(changeWindowSize.x, changeWindowSize.y);
+			changeWindowSizeB = false;
+#elif _WIN32
+			SetWindowSize(changeWindowSize.x, changeWindowSize.y);
+			changeWindowSizeB = false;
+#endif
 		}
 
 		winWidth = GetScreenWidth(); winHeight = GetScreenHeight();
@@ -2940,7 +3070,7 @@ void start(Instance& StartInstance, Vector3 inf, const char* name, const char* i
 			middleFPS = 0;
 			frames = 0;
 		}
-		
+
 		updateSignals();
 		dt = GetFrameTime();
 		Animate::UpdateAnimations(dt);
@@ -2978,7 +3108,7 @@ void start(Instance& StartInstance, Vector3 inf, const char* name, const char* i
 			}
 
 			return result;
-		};
+			};
 
 		PreviousHigherObject = higherObject;
 		higherObject = getTop(&StartInstance);
