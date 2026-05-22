@@ -27,6 +27,18 @@ class Client;
 class Message;
 class Chat;
 
+constexpr std::size_t operator"" _kb(unsigned long long value) {
+    return value * 1024ULL;
+}
+
+constexpr std::size_t operator"" _mb(unsigned long long value) {
+    return value * 1024ULL * 1024ULL;
+}
+
+constexpr std::size_t operator"" _gb(unsigned long long value) {
+    return value * 1024ULL * 1024ULL * 1024ULL;
+}
+
 static constexpr size_t magicNumber = 0x5a7f8d123;
 struct networkHeader {
 	const size_t magicNumber = 0x5a7f8d123;
@@ -65,17 +77,17 @@ public:
 	void loadIcon(const char* p, size_t s) {
 		if (ptr) {
 			if (_size == s) {
-				memcpy((void*)p, ptr, s);
+				memcpy(ptr, (void*)p, s);
 				return;
+			} else {
+				delete[] ptr;
+				_size = 0;
 			}
-		}
-		else {
-			delete[]ptr;
 		}
 
 		ptr = new char[s];
 		_size = s;
-		memcpy((void*)p, ptr, s);
+		memcpy(ptr, (void*)p, s);
 	}
 
 	void unloadIcon() {

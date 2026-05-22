@@ -15,6 +15,8 @@
 #include <tuple>
 #include <algorithm>
 #include <cstdint>
+#include <filesystem>
+#include <fstream>
 
 std::unordered_map<std::string, Shader> Shaders;
 
@@ -2281,6 +2283,8 @@ public:
 				static bool roundShaderLoaded = false;
 				static Shader shader;
 				static float lastRoundness = 0;
+				static Rectangle lastObjectData = {0,0,0,0};
+				static Rectangle lastImageData = {0,0,0,0};
 				if (!roundShaderLoaded) {
 					shader = getShader("TextureRoundness");
 					roundShaderLoaded = true;
@@ -2289,6 +2293,16 @@ public:
 				if (Roundness != lastRoundness) {
 					lastRoundness = Roundness;
 					SetShaderValue(shader, GetShaderLocation(shader, "roundness"), &Roundness, SHADER_UNIFORM_FLOAT);
+				}
+
+				if (destRec.width != lastObjectData.width or destRec.height != lastObjectData.height) {
+					lastObjectData = destRec;
+					SetShaderValue(shader, GetShaderLocation(shader, "objectData"), &destRec, SHADER_UNIFORM_VEC4);
+				}
+				if (srcRec.x != lastImageData.x or srcRec.y != lastImageData.y or
+					srcRec.width != lastImageData.width or srcRec.height != lastImageData.height) {
+					lastImageData = srcRec;
+					SetShaderValue(shader, GetShaderLocation(shader, "imageData"), &srcRec, SHADER_UNIFORM_VEC4);
 				}
 
 				BeginShaderMode(shader);
@@ -2306,15 +2320,17 @@ public:
 
 		image = LoadImageFromMemory(type.c_str(), data.data(), data.size());
 
-		if (image.data == nullptr) return;
-		if (tex.id != 0 and imageOwner) UnloadTexture(tex);
+		if (!image.data) {
+			std::cout << "LoadImageFromMemory FAILED" << std::endl;
+		}
 
+		if (tex.id != 0 and imageOwner) UnloadTexture(tex);
+	
 		imageOwner = true;
 		tex = LoadTextureFromImage(image);
 		GenTextureMipmaps(&tex);
 		SetTextureFilter(tex, TEXTURE_FILTER_TRILINEAR);
 		SetTextureWrap(tex, TEXTURE_WRAP_CLAMP);
-		UnloadImage(image);
 	}
 
 	void Update() override {
@@ -2476,30 +2492,58 @@ public:
 	}
 };
 
-std::vector<unsigned char> ImageToJpgBytes(const std::string& path, int quality = 90) {
-	Image img = LoadImage(path.c_str());
+std::vector<unsigned char> PngBytesToJpgBytes(const std::string& path, int quality = 60) {
+    Image img = LoadImage(path.c_str());
 
-	ImageFormat(&img, PIXELFORMAT_UNCOMPRESSED_R8G8B8);
+    if (img.data == nullptr) {
+        return {};
+    }
 
-	std::vector<unsigned char> out;
+    if (img.width > 1920) {
+        int targetWidth = 1920;
+        int targetHeight = (img.height * 1920) / img.width;
+        ImageResize(&img, targetWidth, targetHeight);
+    }
 
-	stbi_write_jpg_to_func(
-		[](void* context, void* data, int size) {
-			auto* vec = static_cast<std::vector<unsigned char>*>(context);
-			unsigned char* bytes = static_cast<unsigned char*>(data);
-			vec->insert(vec->end(), bytes, bytes + size);
-		},
-		&out,
-		img.width,
-		img.height,
-		3,
-		img.data,
-		quality
-	);
+    Image background = GenImageColor(img.width, img.height, WHITE);
 
-	UnloadImage(img);
+    ImageDraw(&background, img, 
+              (Rectangle){ 0, 0, (float)img.width, (float)img.height }, 
+              (Rectangle){ 0, 0, (float)img.width, (float)img.height }, 
+              WHITE);
 
-	return out;
+    ImageFormat(&background, PIXELFORMAT_UNCOMPRESSED_R8G8B8);
+
+    int channels = 3; 
+    if (background.format == PIXELFORMAT_UNCOMPRESSED_R8G8B8A8) {
+        channels = 4;
+    } else if (background.format == PIXELFORMAT_UNCOMPRESSED_R8G8B8) {
+        channels = 3;
+    } else {
+        ImageFormat(&background, PIXELFORMAT_UNCOMPRESSED_R8G8B8A8);
+        channels = 4;
+    }
+
+    std::vector<unsigned char> outBytes;
+
+    stbi_write_jpg_to_func(
+        [](void* context, void* data, int size) {
+            auto* vec = static_cast<std::vector<unsigned char>*>(context);
+            auto* bytes = static_cast<unsigned char*>(data);
+            vec->insert(vec->end(), bytes, bytes + size);
+        },
+        &outBytes,
+        background.width,
+        background.height,
+        channels,
+        background.data,
+        quality
+    );
+
+    UnloadImage(img);
+    UnloadImage(background);
+
+    return outBytes;
 }
 
 void DrawFrame(Instance* StartInstance) {

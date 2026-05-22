@@ -188,6 +188,7 @@ void data_reader() {
 				}
 
 				char* buf = new char[outputHeader.payload];
+				
 				int errcode2 = recv_exact(buf, outputHeader.payload);
 				if (errcode2 == -1) {
 					std::cout << "fatal error 6" << std::endl;

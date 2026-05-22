@@ -97,41 +97,49 @@ float GetMouseScreenPositionY() {
 		return L"";
 	}
 #elif __linux__
-	std::string GetFile() {
-		gtk_init(NULL, NULL);
+std::string GetFile() {
+    static bool inited = false;
+    if (!inited) {
+        inited = true;
+        gtk_init(nullptr, nullptr);
+    }
 
-		GtkWidget* dialog = gtk_file_chooser_dialog_new(
-			"Open Image",
-			NULL,
-			GTK_FILE_CHOOSER_ACTION_OPEN,
-			"Cancel", GTK_RESPONSE_CANCEL,
-			"Open", GTK_RESPONSE_ACCEPT,
-			NULL
-		);
+    GtkWidget* dialog = gtk_file_chooser_dialog_new(
+        "Open Image",
+        nullptr,
+        GTK_FILE_CHOOSER_ACTION_OPEN,
+        "_Cancel", GTK_RESPONSE_CANCEL,
+        "_Open", GTK_RESPONSE_ACCEPT,
+        nullptr
+    );
 
-		GtkFileChooser* chooser = GTK_FILE_CHOOSER(dialog);
+    GtkFileChooser* chooser = GTK_FILE_CHOOSER(dialog);
 
-		GtkFileFilter* filter = gtk_file_filter_new();
-		gtk_file_filter_set_name(filter, "Images (*.jpg, *.jpeg, *.png)");
-		gtk_file_filter_add_pattern(filter, "*.jpg");
-		gtk_file_filter_add_pattern(filter, "*.jpeg");
-		gtk_file_filter_add_pattern(filter, "*.png");
+	GtkFileFilter* filter = gtk_file_filter_new();
+	gtk_file_filter_set_name(filter, "Images (*.jpg, *.jpeg, *.png)");
+	gtk_file_filter_add_pattern(filter, "*.jpg");
+	gtk_file_filter_add_pattern(filter, "*.jpeg");
+	gtk_file_filter_add_pattern(filter, "*.png");
+	gtk_file_chooser_add_filter(chooser, filter);
 
-		gtk_file_chooser_add_filter(chooser, filter);
+    std::string result;
+    int response = gtk_dialog_run(GTK_DIALOG(dialog));
 
-		std::string result;
+    if (response == GTK_RESPONSE_ACCEPT) {
+        char* filename = gtk_file_chooser_get_filename(chooser);
+        if (filename) {
+            result = filename;
+            g_free(filename);
+        }
+    }
 
-		if (gtk_dialog_run(GTK_DIALOG(dialog)) == GTK_RESPONSE_ACCEPT)
-		{
-			char* filename = gtk_file_chooser_get_filename(chooser);
-			if (filename)
-			{
-				result = filename;
-				g_free(filename);
-			}
-		}
+    gtk_widget_hide(dialog);
+    gtk_widget_destroy(dialog);
 
-		gtk_widget_destroy(dialog);
-		return result;
-	}
+    while (g_main_context_pending(nullptr)) {
+        g_main_context_iteration(nullptr, FALSE);
+    }
+
+    return result;
+}
 #endif

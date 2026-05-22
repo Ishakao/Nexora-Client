@@ -3,6 +3,8 @@
 #include <thread>
 #include <mutex>
 #include <string>
+#include <filesystem>
+#include <fstream>
 #define _SHOW_NEXORA
 #define BAR_SIZE 25
 #define CHAT_SIZE 60
@@ -264,7 +266,7 @@ std::vector<Chat*> deserializeChats(std::pair<const char*, size_t> data) {
 
 Client* deserializeClient(const std::string& data) {
 	std::istringstream in(data);
-
+	std::cout << data.substr(0, 80) << std::endl;
 	size_t id, lastActivity, len1, len2, len3;
 	std::string name, login, icon;
 
@@ -287,6 +289,78 @@ Client* deserializeClient(const std::string& data) {
 	c->login = login;
 
 	return c;
+}
+
+void onClientPtrChanged() {
+	if (*getClientPtr()) {
+			asyncDataMutex.lock();
+			dynamic_cast<TextLabel*>(StartInstance->findFirstDescendant("PROFILE_NAME"))->Text = (*getClientPtr())->userName;
+			dynamic_cast<TextLabel*>(StartInstance->findFirstDescendant("UserID"))->Text = "UID: " + std::to_string((*getClientPtr())->userID);
+			dynamic_cast<TextBox*>(StartInstance->findFirstDescendant("PROFILE_NAME1"))->SetText((*getClientPtr())->userName);
+			dynamic_cast<TextLabel*>(StartInstance->findFirstDescendant("ProfileLogin"))->Text = "@" + (*getClientPtr())->login;
+
+			if ((*getClientPtr())->avatar.size() <= 1) {
+				ImageLabel* ProfileImage = dynamic_cast<ImageLabel*>(StartInstance->findFirstDescendant("PROFILE_IMAGE"));
+				ProfileImage->setImage(getImage("profile"));
+				ProfileImage->ImageColor = DEFAULT_TEXT;
+
+				ImageLabel* ProfileImage2 = dynamic_cast<ImageLabel*>(StartInstance->findFirstDescendant("ProfileImage"));
+				ProfileImage2->setImage(getImage("profile"));
+				ProfileImage2->ImageColor = DEFAULT_TEXT;
+			} else {
+				auto ic = (*getClientPtr())->avatar.getIcon();
+				
+				std::vector<unsigned char> icon(ic.second);
+				memcpy(icon.data(), ic.first, ic.second);
+
+				ImageLabel* ProfileImage = dynamic_cast<ImageLabel*>(StartInstance->findFirstDescendant("PROFILE_IMAGE"));
+				ProfileImage->UpdateWithType(".jpg", icon);
+				ProfileImage->ImageColor = { 255,255,255,255 };
+
+				ImageLabel* ProfileImage2 = dynamic_cast<ImageLabel*>(StartInstance->findFirstDescendant("ProfileImage"));
+				ProfileImage2->UpdateWithType(".jpg", icon);
+				ProfileImage2->ImageColor = { 255,255,255,255 };
+			}
+
+			asyncDataMutex.unlock();
+		}
+}
+
+void UPDATE_USER_DATA() {
+	std::string string_id = std::to_string(clientId);
+	char* input2 = new char[string_id.size() + 1];
+	memcpy(input2, string_id.data(), string_id.size());
+	input2[string_id.size()] = '\0';
+
+	AsyncData* data2 = new AsyncData(input2, QueryType::GET_USER_INFO, string_id.size() + 1);
+	data2->Completed([input2](std::pair<const char*, size_t> output1) {
+		if (!output1.first) {
+			delete[] input2;
+			return;
+		}
+		
+		if (!strcmp(output1.first, "e1")) {
+			std::cout << "No client with id " << input2 << std::endl;
+			delete[] output1.first;
+			delete[] input2;
+			return;
+		}
+
+		delete[] input2;
+
+		asyncDataMutex.lock();
+		if (*getClientPtr()) {
+			delete(*getClientPtr());
+		}
+
+		*getClientPtr() = deserializeClient(std::string(output1.first, output1.second));
+		asyncDataMutex.unlock();
+
+		onClientPtrChanged();
+
+		delete[] output1.first;
+	});
+	data2->send();
 }
 
 
@@ -910,7 +984,6 @@ int initAuth() {
 		memcpy(input + Login->GetText().size() + 1, Password->GetText().c_str(), Password->GetText().size());
 
 		AsyncData* data = new AsyncData(input, QueryType::SignIn, size);
-		data->deleteOnCompleted = false;
 		data->Completed([DataIncorrect, Login, Password, CheckLogin, data, input](std::pair<const char*, size_t> output) {
 			CheckLogin->Active = true;
 			CheckLogin->TextColor = mulColor(DEFAULT_TEXT, 0.8);
@@ -924,7 +997,6 @@ int initAuth() {
 			if (output.first) {
 				if (!strcmp(output.first, "-1")) {
 					std::cout << "Header is incorrect" << std::endl;
-					delete data;
 					return;
 				}
 
@@ -951,53 +1023,18 @@ int initAuth() {
 					Authenticated = true;
 					loadChats(0, []() {
 						ChatsUpdated = true;
-						});
+					});
 					DataIncorrect->TextTransparency = 1;
 
-					std::string string_id = std::to_string(id);
-					char* input2 = new char[string_id.size() + 1];
-					memcpy(input2, string_id.data(), string_id.size());
-					input2[string_id.size()] = '\0';
-
-					AsyncData* data2 = new AsyncData(input2, QueryType::GET_USER_INFO, string_id.size() + 1);
-					data2->Completed([input2, data](std::pair<const char*, size_t> output1) {
-						if (!output1.first) {
-							delete data;
-							delete[] input2;
-							return;
-						}
-
-						if (!strcmp(output1.first, "e1")) {
-							std::cout << "No client with id " << input2 << std::endl;
-							delete[] output1.first;
-							delete data;
-							delete[] input2;
-							return;
-						}
-
-						delete[] input2;
-
-						asyncDataMutex.lock();
-						if (*getClientPtr()) {
-							delete* getClientPtr();
-						}
-
-						*getClientPtr() = deserializeClient(std::string(output1.first));
-						asyncDataMutex.unlock();
-
-						delete[] output1.first;
-						delete data;
-						});
-					data2->send();
+					UPDATE_USER_DATA();
 				}
 				delete[]output.first;
 			}
 			else {
 				DataIncorrect->Text = "Server doesn't answer";
 				DataIncorrect->TextTransparency = 0;
-				delete data;
 			}
-			});
+		});
 		data->Sended([Login, Password, CheckLogin, DataIncorrect]() {
 			DataIncorrect->TextTransparency = 1;
 			CheckLogin->Active = false;
@@ -1152,7 +1189,6 @@ int initAuth() {
 		memcpy(input + Login2->GetText().size() + 1, Password2->GetText().c_str(), Password2->GetText().size());
 
 		AsyncData* data = new AsyncData(input, QueryType::SignUp, size);
-		data->deleteOnCompleted = false;
 		data->Completed([DataIncorrect2, Login2, Password2, Password22, CheckLogin2, data, input](std::pair<const char*, size_t> output) {
 			CheckLogin2->Active = true;
 			CheckLogin2->TextColor = mulColor(DEFAULT_TEXT, 0.8);
@@ -1167,7 +1203,6 @@ int initAuth() {
 			if (output.first) {
 				if (!strcmp(output.first, "-1")) {
 					std::cout << "Header is incorrect" << std::endl;
-					delete data;
 					return;
 				}
 
@@ -1192,45 +1227,15 @@ int initAuth() {
 						});
 					DataIncorrect2->TextTransparency = 1;
 
-					std::string string_id = std::to_string(id);
-					char* input2 = new char[string_id.size() + 1];
-					memcpy(input2, string_id.data(), string_id.size());
-					input2[string_id.size()] = '\0';
-
-					AsyncData* data2 = new AsyncData(input2, QueryType::GET_USER_INFO, string_id.size());
-					data2->Completed([input2, data, id](std::pair<const char*, size_t> output1) {
-						if (!output1.first) {
-							SendInfoMessage("Get user error", "Something went wrong.\nPlease retry", ERROR);
-							delete data;
-							delete[] input2;
-							return;
-						}
-
-						if (!strcmp(output1.first, "e1")) {
-							SendInfoMessage("Get user error", "No user with id " + std::to_string(id), ERROR);
-							delete[] output1.first;
-							delete data;
-							delete[] input2;
-							return;
-						}
-
-						if (*getClientPtr()) delete* getClientPtr();
-						*getClientPtr() = deserializeClient(std::string(output1.first, output1.second));
-						delete[] output1.first;
-						delete data;
-						delete[] input2;
-						});
-
-					data2->send();
+					UPDATE_USER_DATA();
 				}
 				delete[]output.first;
 			}
 			else {
 				DataIncorrect2->Text = "Server doesn't answer";
 				DataIncorrect2->TextTransparency = 0;
-				delete data;
 			}
-			});
+		});
 		data->Sended([Login2, Password2, Password22, CheckLogin2, DataIncorrect2]() {
 			DataIncorrect2->TextTransparency = 1;
 			CheckLogin2->Active = false;
@@ -1276,6 +1281,7 @@ int profileUI() {
 	ProfileImage->BorderColor = mulColor(DEFAULT_BACKGROUND, 1);
 	ProfileImage->BorderThickness = 3;
 	ProfileImage->Name = "ProfileImage";
+	ProfileImage->Overlay = CROP;
 
 	Object2D* changeImage = new Object2D(ProfileImage);
 	changeImage->Size = { 1.01,1.01 };
@@ -1306,12 +1312,72 @@ int profileUI() {
 	});
 
 	changeImage->SetMouse1HoldEnd([](Object2D* t) {
-		std::thread t([]() {
+		std::thread thr([]() {
+			#ifdef _WIN32
 			std::wstring path = GetFile();
+			#elif __linux__
+			std::string path = GetFile();
+			#endif
 			if (path.empty()) {
+				return;
+			}
 
+			try {
+				std::filesystem::path file = path;
+				if (file.extension() != ".png" and
+					file.extension() != ".jpg" and
+					file.extension() != ".jpeg") {
+						SendInfoMessage("File choice", "Incorrect file type", WARN);
+						return;
+				}
+
+				size_t size = 0;
+				char* input = nullptr;
+
+				if (file.extension() == ".png") {
+					const std::vector<unsigned char>& bytes = PngBytesToJpgBytes(path);
+					size = bytes.size();
+					input = new char[size];
+					memcpy(input, bytes.data(), size);
+				} else {
+					std::ifstream data_file(path, std::ios::binary);
+					if (!data_file) return;
+					size = std::filesystem::file_size(file);
+					input = new char[size];
+					data_file.read(input, size);
+				}
+				
+				if (size > 10_mb) {
+					SendInfoMessage("File size", "Avatar size must be < 10mb", WARN);
+					return;
+				}
+				
+				auto data = new AsyncData(input, UPDATE_AVATAR, size);
+				data->Completed([input](std::pair<const char*, size_t> output){
+					delete[] input;
+					if (!output.first) {
+						SendInfoMessage("Change avatar", "Output is nullptr", ERROR);
+						return;
+					}
+
+					if (!strcmp(output.first, "e1")) {
+						SendInfoMessage("Change avatar", "Avatar is incorrect", WARN);
+						return;
+					}
+
+					delete[] output.first;
+					UPDATE_USER_DATA();
+				});
+
+				data->send();
+
+			} catch (const char* ex) {
+				std::cout << ex << std::endl;
+				std::cout << "MEMORY LEAK BECAUSE EXCEPTION" << std::endl;
 			}
 		});
+
+		thr.detach();
 	});
 
 	ImageLabel* ConfirmName = new ImageLabel(profileFrame);
@@ -1373,7 +1439,7 @@ int profileUI() {
 	ProfileName->maxSymbols = 40;
 	ProfileName->ClearOnClick = false;
 	ProfileName->font = "SegoeB";
-	ProfileName->Name = "PROFILE_NAME";
+	ProfileName->Name = "PROFILE_NAME1";
 	ProfileName->CursorColor = mulColor(DEFAULT_TEXT, 0.9);
 	ProfileName->TextAnchor = TextAnchorEnum::W;
 	ProfileName->Type = Viewported;
@@ -1545,9 +1611,11 @@ int generalUI() {
 	ProfileImage->ImageColor = DEFAULT_TEXT;
 	ProfileImage->Roundness = 1;
 	ProfileImage->RoundImage = true;
+	ProfileImage->Overlay = CROP;
 	ProfileImage->PositionOFFSET.y = 20;
 	ProfileImage->BorderColor = mulColor(DEFAULT_BACKGROUND, 1.2);
 	ProfileImage->BorderThickness = 5;
+	ProfileImage->Name = "PROFILE_IMAGE";
 
 	TextLabel* ProfileName = new TextLabel(LeftMenu);
 	ProfileName->AnchorPosition = { 0.5,0 };
@@ -1570,6 +1638,7 @@ int generalUI() {
 	UserID->PositionOFFSET.y = -30;
 	UserID->font = "SegoeB";
 	UserID->Text = "UserID";
+	UserID->Name = "UserID";
 
 	{ // PROFILE BUTTON
 		Object2D* ProfileButtonFull = new Object2D(LeftMenu);
@@ -1918,37 +1987,6 @@ int generalUI() {
 				newChat->PositionOFFSET.y = CHAT_SIZE * i++;
 			}
 			loadChatsMutex.unlock();
-		}
-		});
-
-	new ChangedSignal<Client*>(*getClientPtr(), [ProfileName, UserID, ProfileImage]() {
-		if (*getClientPtr()) {
-			asyncDataMutex.lock();
-
-			ProfileName->Text = (*getClientPtr())->userName;
-			UserID->Text = "UID: " + std::to_string((*getClientPtr())->userID);
-
-			dynamic_cast<TextBox*>(profileFrame->findChild("PROFILE_NAME"))->SetText((*getClientPtr())->userName);
-			dynamic_cast<TextLabel*>(profileFrame->findChild("ProfileLogin"))->Text = "@" + (*getClientPtr())->login;
-
-			if ((*getClientPtr())->avatar.size() <= 1) {
-				ProfileImage->setImage(getImage("profile"));
-				ProfileImage->ImageColor = DEFAULT_TEXT;
-				ImageLabel* ProfileImage2 = dynamic_cast<ImageLabel*>(profileFrame->findChild("ProfileImage"));
-				ProfileImage2->setImage(getImage("profile"));
-				ProfileImage2->ImageColor = DEFAULT_TEXT;
-			}
-			else {
-				ProfileImage->ImageColor = { 255,255,255,255 };
-				std::vector<unsigned char> icon((*getClientPtr())->avatar.getIcon().second);
-				memcpy(icon.data(), (*getClientPtr())->avatar.getIcon().first, (*getClientPtr())->avatar.getIcon().second);
-				ProfileImage->UpdateWithType(".jpg", icon);
-				ImageLabel* ProfileImage2 = dynamic_cast<ImageLabel*>(profileFrame->findChild("ProfileImage"));
-				ProfileImage->UpdateWithType(".jpg", icon);
-				ProfileImage2->ImageColor = { 255,255,255,255 };
-			}
-
-			asyncDataMutex.unlock();
 		}
 	});
 
