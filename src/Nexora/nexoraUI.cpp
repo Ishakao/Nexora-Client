@@ -16,6 +16,7 @@ const int minH = 520;
 
 Instance* StartInstance = nullptr;
 bool Resizing_EW = false;
+bool Beamed_Cursor = false;
 Object2D* ChatTemplate = nullptr;
 ScrollFrame* CurrentChatScroll = nullptr;
 size_t CurrentChatID = 0;
@@ -266,7 +267,6 @@ std::vector<Chat*> deserializeChats(std::pair<const char*, size_t> data) {
 
 Client* deserializeClient(const std::string& data) {
 	std::istringstream in(data);
-	std::cout << data.substr(0, 80) << std::endl;
 	size_t id, lastActivity, len1, len2, len3;
 	std::string name, login, icon;
 
@@ -526,8 +526,7 @@ int initUpperBar() {
 			Vector2 delta = { m.x - startMouseScreen.x, m.y - startMouseScreen.y };
 
 			SUI_SetWindowPosition((int)roundf(startWinPos.x + delta.x), (int)roundf(startWinPos.y + delta.y));
-		}
-		else {
+		} else {
 			static bool resizing = false;
 			static int resizeMask = 0;
 			static Vector2 startMouseScreen = { 0,0 };
@@ -623,9 +622,13 @@ int initUpperBar() {
 			}
 		}
 
+		if (Beamed_Cursor) {
+			SetMouseCursor(MOUSE_CURSOR_IBEAM);
+		}
+
 		if (pressed) pressed = false;
 		if (released) released = false;
-		});
+	});
 
 	ImageLabel* icon = new ImageLabel(upperBar);
 	icon->ZIndex = 2;
@@ -1258,8 +1261,8 @@ int profileUI() {
 	}
 
 	profileFrame = new ScrollFrame(StartInstance->findChild("GeneralUI background"));
-	profileFrame->SizeOFFSET.x = 400;
-	profileFrame->SizeOFFSET.y = 450;
+	profileFrame->SizeOFFSET.x = 0; //400
+	profileFrame->SizeOFFSET.y = 0; //450
 	profileFrame->BackgroundColor = mulColor(DEFAULT_BACKGROUND, 1.2);
 	profileFrame->Roundness = 0.1;
 	profileFrame->BorderColor = DEFAULT_BACKGROUND;
@@ -1311,8 +1314,15 @@ int profileUI() {
 		Animate::Create(&changeImageImg->ImageTransparency, 0.1, 1);
 	});
 
+	static bool o = false;
+	static std::mutex o_m;
+
 	changeImage->SetMouse1HoldEnd([](Object2D* t) {
+		if (o) return;
 		std::thread thr([]() {
+			o_m.lock();
+			o = true;
+			o_m.unlock();
 			#ifdef _WIN32
 			std::wstring path = GetFile();
 			#elif __linux__
@@ -1322,6 +1332,10 @@ int profileUI() {
 				return;
 			}
 
+			o_m.lock();
+			o = false;
+			o_m.unlock();
+			
 			try {
 				std::filesystem::path file = path;
 				if (file.extension() != ".png" and
@@ -1445,6 +1459,14 @@ int profileUI() {
 	ProfileName->Type = Viewported;
 	ProfileName->OnTextChanged([ProfileName, ConfirmName, NameLowerLine](Object2D* t) {
 		updAnim();
+	});
+
+	ProfileName->SetMouseEnter([](Object2D* t){
+		Beamed_Cursor = true;
+	});
+
+	ProfileName->SetMouseLeave([](Object2D* t){
+		Beamed_Cursor = false;
 	});
 
 	ConfirmName->SetMouse1HoldEnd([ProfileName, ConfirmName, NameLowerLine](Object2D* t) {
