@@ -412,6 +412,7 @@ enum InstanceType {
 	BOOL_VALUE,
 	FLOAT_VALUE,
 	OBJECT_VALUE,
+	ADDRESS_VALUE,
 	VECTOR2_VALUE,
 	COLOR_VALUE,
 	FOLDER
@@ -648,7 +649,7 @@ public:
 	}
 };
 
-class StringValue : virtual public Instance {
+class StringValue : public Instance {
 	constexpr static const char* DefaultName = "StringValue";
 	constexpr static InstanceType DefaultClass = STRING_VALUE;
 public:
@@ -660,7 +661,7 @@ public:
 	StringValue() = delete;
 };
 
-class ObjectValue : virtual public Instance {
+class ObjectValue : public Instance {
 	constexpr static const char* DefaultName = "ObjectValue";
 	constexpr static InstanceType DefaultClass = OBJECT_VALUE;
 public:
@@ -672,7 +673,20 @@ public:
 	ObjectValue() = delete;
 };
 
-class BoolValue : virtual public Instance {
+template<typename T>
+class AddressValue : public Instance {
+	constexpr static const char* DefaultName = "AddressValue";
+	constexpr static InstanceType DefaultClass = ADDRESS_VALUE;
+public:
+	T* Value = nullptr;
+
+	AddressValue(bool a) : Instance(a) { Name = DefaultName; Class = DefaultClass; };
+	AddressValue(Instance* p) : Instance(p) { Name = DefaultName; Class = DefaultClass; }
+
+	AddressValue() = delete;
+};
+
+class BoolValue : public Instance {
 	constexpr static const char* DefaultName = "BoolValue";
 	constexpr static InstanceType DefaultClass = BOOL_VALUE;
 public:
@@ -684,7 +698,7 @@ public:
 	BoolValue() = delete;
 };
 
-class IntValue : virtual public Instance {
+class IntValue : public Instance {
 	constexpr static const char* DefaultName = "IntValue";
 	constexpr static InstanceType DefaultClass = INT_VALUE;
 public:
@@ -696,7 +710,7 @@ public:
 	IntValue() = delete;
 };
 
-class FloatValue : virtual public Instance {
+class FloatValue : public Instance {
 	constexpr static const char* DefaultName = "FloatValue";
 	constexpr static InstanceType DefaultClass = FLOAT_VALUE;
 public:
@@ -708,7 +722,7 @@ public:
 	FloatValue() = delete;
 };
 
-class Vector2Value : virtual public Instance {
+class Vector2Value : public Instance {
 	constexpr static const char* DefaultName = "Vector2Value";
 	constexpr static InstanceType DefaultClass = VECTOR2_VALUE;
 public:
@@ -720,7 +734,7 @@ public:
 	Vector2Value() = delete;
 };
 
-class ColorValue : virtual public Instance {
+class ColorValue : public Instance {
 	constexpr static const char* DefaultName = "ColorValue";
 	constexpr static InstanceType DefaultClass = COLOR_VALUE;
 public:
@@ -732,7 +746,7 @@ public:
 	ColorValue() = delete;
 };
 
-class Folder : virtual public Instance {
+class Folder : public Instance {
 	constexpr static const char* DefaultName = "Folder";
 	constexpr static InstanceType DefaultClass = FOLDER;
 public:
@@ -743,7 +757,7 @@ public:
 	Folder() = delete;
 };
 
-Vector2 getCanvasPosition(Object2D*);
+Vector2 getCanvasRealPos(Object2D*);
 Vector2 getScrollFrameRS(Instance*);
 Vector2 getScrollFrameRP(Instance*);
 bool isScrollFrameCropping(Instance*);
@@ -769,12 +783,24 @@ class Object2D : public Instance {
 	bool startedOnObject1 = false;
 	bool startedOnObject2 = false;
 
+	bool lastActive = Active;
+	int lastZIndex = ZIndex;
 protected:
 	bool RelativePCalculated = false;
 	bool RelativeSCalculated = false;
 	Vector2 RelativePosition{};
 	Vector2 RelativeSize{};
 
+	void SameUpdate() {
+		if (Active != lastActive or lastZIndex != ZIndex) {
+			lastActive = Active;
+			lastZIndex = ZIndex;
+			
+			if (Parent) {
+				Parent->updateChildrenZIndex = true;
+			}
+		}
+	} 
 public:
 	Vector2 RealSize{};
 	Vector2 RealPos{};
@@ -925,9 +951,9 @@ public:
 			};
 
 			if (obj->Class == SCROLLFRAME) {
-				Vector2 canvasPx = getCanvasPosition(obj);
-				posPx.x = parentPosPx.x + myLocalPx.x - canvasPx.x * dynamic_cast<Object2D*>(current)->RealSize.x;
-				posPx.y = parentPosPx.y + myLocalPx.y - canvasPx.y * dynamic_cast<Object2D*>(current)->RealSize.y;
+				Vector2 canvasPx = getCanvasRealPos(obj);
+				posPx.x = parentPosPx.x + myLocalPx.x - canvasPx.x;
+				posPx.y = parentPosPx.y + myLocalPx.y - canvasPx.y;
 			}
 			else {
 				posPx.x = parentPosPx.x + myLocalPx.x;
@@ -1022,6 +1048,8 @@ public:
 		RelativePCalculated = false;
 		if (!Visible) return;
 
+		SameUpdate();
+
 		if (updateChildrenZIndex) {
 			updateChildren(this);
 		}
@@ -1080,13 +1108,13 @@ class LineEx : public Instance { // it cannot contain Object2D inheritors inside
 			};
 
 			if (obj->Class == SCROLLFRAME) {
-				Vector2 CanvasPosition = getCanvasPosition(obj);
+				Vector2 CanvasPosition = getCanvasRealPos(obj);
 
-				pos1.x = parentPos.x + (pos1.x - CanvasPosition.x) * obj->Size.x;
-				pos1.y = parentPos.y + (pos1.y - CanvasPosition.y) * obj->Size.y;
+				pos1.x = parentPos.x + (pos1.x - CanvasPosition.x);
+				pos1.y = parentPos.y + (pos1.y - CanvasPosition.y);
 
-				pos2.x = parentPos.x + (pos2.x - CanvasPosition.x) * obj->Size.x;
-				pos2.y = parentPos.y + (pos2.y - CanvasPosition.y) * obj->Size.y;
+				pos2.x = parentPos.x + (pos2.x - CanvasPosition.x);
+				pos2.y = parentPos.y + (pos2.y - CanvasPosition.y);
 			}
 			else {
 				pos1.x = parentPos.x + pos1.x * obj->Size.x;
@@ -1159,7 +1187,7 @@ void updateChildren(Instance* parent) {
 		if (az) return true;
 		if (bz) return false;
 		return true;
-		});
+	});
 }
 
 Font getFont(const std::string& name) {
@@ -1207,7 +1235,12 @@ class ScrollFrame : public Object2D {
 public:
 	Vector2 CanvasSize = { 1,1 };
 	Vector2 CanvasPosition = { 0,0 };
+	Vector2 CanvasSizeOFFSET = { 0,0 };
+	Vector2 CanvasPositionOFFSET = { 0,0 };
+	Vector2 CanvasAbsoluteSize = {0,0};
+	Vector2 CanvasAbsolutePosition = {0,0};
 	float ScrollSpeed = 0.5;
+	float ScrollSpeedOFFSET = 0;
 	bool CropDescendants = true;
 	Color SliderColor = { 15,15,15,255 };
 	float SliderTransparency = 0.5;
@@ -1231,23 +1264,39 @@ public:
 
 		if (pushed) PopClip();
 
-
 		if (SliderTransparency != 1 and SliderSize != 0) {
-
-			if (CanvasSize.y > 1) {
+			if (CanvasSize.y > 1 or CanvasSizeOFFSET.y > RealSize.y) {
 				if (Direction == 'Y' or Direction == 'B') {
-					float sliderHeight = RealSize.y * (1.0f / CanvasSize.y);
-					float sliderY = RealPos.y + (RealSize.y - sliderHeight) * (CanvasPosition.y / (CanvasSize.y - 1));
+					float totalContentHeight = (RealSize.y * CanvasSize.y) + CanvasSizeOFFSET.y;
+					float sliderHeight = RealSize.y * (RealSize.y / totalContentHeight);
+					
+					float maxScrollY = (RealSize.y * (CanvasSize.y)) + CanvasSizeOFFSET.y;
+					float currentScrollY = (RealSize.y * CanvasPosition.y) + CanvasPositionOFFSET.y;
+
+					float sliderY = RealPos.y;
+					if (maxScrollY > 0) {
+						sliderY += (RealSize.y - sliderHeight) * (currentScrollY / maxScrollY);
+					}
+
 					Vector2 firstPoint = { RealPos.x + RealSize.x - SliderSize * 0.6f, sliderY };
 					Vector2 secondPoint = { firstPoint.x, sliderY + sliderHeight };
 					DrawLineEx(firstPoint, secondPoint, SliderSize, { SliderColor.r, SliderColor.g, SliderColor.b, (unsigned char)(SliderColor.a * (1 - SliderTransparency)) });
 				}
 			}
 
-			if (CanvasSize.x > 1) {
+			if (CanvasSize.x > 1 or CanvasSizeOFFSET.x > RealSize.x) {
 				if (Direction == 'X' or Direction == 'B') {
-					float sliderWidth = RealSize.x * (1.0f / CanvasSize.x);
-					float sliderX = RealPos.x + (RealSize.x - sliderWidth) * (CanvasPosition.x / (CanvasSize.x - 1));
+					float totalContentWidth = (RealSize.x * CanvasSize.x) + CanvasSizeOFFSET.x;
+					float sliderWidth = RealSize.x * (RealSize.x / totalContentWidth);
+					
+					float maxScrollX = (RealSize.x * (CanvasSize.x)) + CanvasSizeOFFSET.x;
+					float currentScrollX = (RealSize.x * CanvasPosition.x) + CanvasPositionOFFSET.x;
+
+					float sliderX = RealPos.x;
+					if (maxScrollX > 0) {
+						sliderX += (RealSize.x - sliderWidth) * (currentScrollX / maxScrollX);
+					}
+
 					Vector2 firstPoint = { sliderX, RealPos.y + RealSize.y - SliderSize * 0.6f };
 					Vector2 secondPoint = { sliderX + sliderWidth, firstPoint.y };
 					DrawLineEx(firstPoint, secondPoint, SliderSize, { SliderColor.r, SliderColor.g, SliderColor.b, (unsigned char)(SliderColor.a * (1 - SliderTransparency)) });
@@ -1258,7 +1307,7 @@ public:
 
 	void Update() override {
 		if (!Visible) return;
-		if (CanvasSize.x < 1) CanvasSize.x = 1; if (CanvasSize.y < 1) CanvasSize.y = 1;
+		if (CanvasSize.x < 0) CanvasSize.x = 0; if (CanvasSize.y < 0) CanvasSize.y = 0;
 		if (Direction != 'X' and Direction != 'Y' and Direction != 'B') {
 			Direction = 'Y';
 		}
@@ -1267,40 +1316,87 @@ public:
 		getRealObject2Dposition();
 		eventHandler();
 
+		SameUpdate();
+
 		if (updateChildrenZIndex) {
 			updateChildren(this);
 		}
 
-		if (CanvasPosition.x + 1 > CanvasSize.x)
-			CanvasPosition.x = (CanvasSize.x - 1 > 0 ? CanvasSize.x - 1 : 0);
-		if (CanvasPosition.y + 1 > CanvasSize.y)
-			CanvasPosition.y = (CanvasSize.y - 1 > 0 ? CanvasSize.y - 1 : 0);
+		float maxScrollX = (RealSize.x * (CanvasSize.x)) + CanvasSizeOFFSET.x;
+		float maxScrollY = (RealSize.y * (CanvasSize.y)) + CanvasSizeOFFSET.y;
 
-		if (CanvasPosition.x < 0)
-			CanvasPosition.x = 0;
-		if (CanvasPosition.y < 0)
-			CanvasPosition.y = 0;
+		if (CanvasPositionOFFSET.x < 0) CanvasPositionOFFSET.x = 0;
+		if (CanvasPositionOFFSET.y < 0) CanvasPositionOFFSET.y = 0;
+		if (CanvasPosition.x < 0) CanvasPosition.x = 0;
+		if (CanvasPosition.y < 0) CanvasPosition.y = 0;
 
-		if (pointInObject(GetMousePosition()) and ScrollEnabled) {
+		float currentScrollX = (RealSize.x * CanvasPosition.x) + CanvasPositionOFFSET.x;
+		if (currentScrollX > maxScrollX) {
+			CanvasPositionOFFSET.x = maxScrollX - (RealSize.x * CanvasPosition.x);
+			if (CanvasPositionOFFSET.x < 0) {
+				CanvasPosition.x = maxScrollX / RealSize.x;
+				CanvasPositionOFFSET.x = 0;
+			}
+		}
+
+		float currentScrollY = (RealSize.y * CanvasPosition.y) + CanvasPositionOFFSET.y;
+		if (currentScrollY > maxScrollY) {
+			CanvasPositionOFFSET.y = maxScrollY - (RealSize.y * CanvasPosition.y);
+			if (CanvasPositionOFFSET.y < 0) {
+				CanvasPosition.y = maxScrollY / RealSize.y;
+				CanvasPositionOFFSET.y = 0;
+			}
+		}
+
+		if ((higherObject == this or (higherObject != this and CanBeEnteredIfNotHigher and pointInObject(GetMousePosition()))) and ScrollEnabled) {
 			float WheelMove = GetMouseWheelMove();
 			if (WheelMove > 0) {
 				if (Direction == 'Y' or (!IsKeyDown(KEY_LEFT_SHIFT) and Direction == 'B')) {
-					float newY = CanvasPosition.y - ScrollSpeed; if (newY < 0) newY = 0;
-					Animate::Create(&CanvasPosition.y, 0.125, newY);
+					float newY = CanvasPositionOFFSET.y - ScrollSpeedOFFSET;
+					float newY1 = CanvasPosition.y - ScrollSpeed;
+					if (newY < 0) newY = 0;
+					if (newY1 < 0) newY1 = 0;
+					if (Animated) {
+						Animate::Create(&CanvasPositionOFFSET.y, 0.125, newY);
+						Animate::Create(&CanvasPosition.y, 0.125, newY1);
+					} else {
+						CanvasPositionOFFSET.y = newY;
+						CanvasPosition.y = newY1;
+					}
+				} else if (Direction == 'X' or (IsKeyDown(KEY_LEFT_SHIFT) and Direction == 'B')) {
+					float newX = CanvasPositionOFFSET.x - ScrollSpeedOFFSET;
+					float newX1 = CanvasPosition.x - ScrollSpeed;
+					if (newX < 0) newX = 0;
+					if (newX1 < 0) newX1 = 0;
+					if (Animated) {
+						Animate::Create(&CanvasPositionOFFSET.x, 0.125, newX);
+						Animate::Create(&CanvasPosition.x, 0.125, newX1);
+					} else {
+						CanvasPositionOFFSET.x = newX;
+						CanvasPosition.x = newX1;
+					}
 				}
-				else if (Direction == 'X' or (IsKeyDown(KEY_LEFT_SHIFT) and Direction == 'B')) {
-					float newX = CanvasPosition.x - ScrollSpeed; if (newX < 0) newX = 0;
-					Animate::Create(&CanvasPosition.x, 0.125, newX);
-				}
-			}
-			else if (WheelMove < 0) {
+			} else if (WheelMove < 0) {
 				if (Direction == 'Y' or (!IsKeyDown(KEY_LEFT_SHIFT) and Direction == 'B')) {
-					float newY = CanvasPosition.y + ScrollSpeed; if (newY - 1 > CanvasSize.y) newY = 0;
-					Animate::Create(&CanvasPosition.y, 0.125, newY);
-				}
-				else if (Direction == 'X' or (IsKeyDown(KEY_LEFT_SHIFT) and Direction == 'B')) {
-					float newX = CanvasPosition.x + ScrollSpeed; if (newX - 1 > CanvasSize.x) newX = 0;
-					Animate::Create(&CanvasPosition.x, 0.125, newX);
+					float newY = CanvasPositionOFFSET.y + ScrollSpeedOFFSET;
+					float newY1 = CanvasPosition.y + ScrollSpeed;
+					if (Animated) {
+						Animate::Create(&CanvasPositionOFFSET.y, 0.125, newY);
+						Animate::Create(&CanvasPosition.y, 0.125, newY1);
+					} else {
+						CanvasPositionOFFSET.y = newY;
+						CanvasPosition.y = newY1;
+					}
+				} else if (Direction == 'X' or (IsKeyDown(KEY_LEFT_SHIFT) and Direction == 'B')) {
+					float newX = CanvasPositionOFFSET.x + ScrollSpeedOFFSET;
+					float newX1 = CanvasPosition.x + ScrollSpeed;
+					if (Animated) {
+						Animate::Create(&CanvasPositionOFFSET.x, 0.125, newX);
+						Animate::Create(&CanvasPosition.x, 0.125, newX1);
+					} else {
+						CanvasPositionOFFSET.y = newX;
+						CanvasPosition.y = newX1;
+					}
 				}
 			}
 		}
@@ -1324,9 +1420,13 @@ public:
 
 	ScrollFrame() = delete;
 };
-Vector2 getCanvasPosition(Object2D* obj) {
+Vector2 getCanvasRealPos(Object2D* obj) {
 	ScrollFrame* scra = dynamic_cast<ScrollFrame*>(obj);
-	if (scra) return scra->CanvasPosition;
+	if (scra) return 
+	{
+		scra->CanvasPosition.x * scra->RealSize.x + scra->CanvasPositionOFFSET.x,
+		scra->CanvasPosition.y * scra->RealSize.y + scra->CanvasPositionOFFSET.y
+	};
 	return { 0,0 };
 }
 
@@ -1510,7 +1610,7 @@ struct KeyMapping {
 	const char* shiftRU;
 };
 
-KeyMapping KeysMapping[49] = {
+constexpr KeyMapping KeysMapping[49] = {
 	{ KEY_ONE,   "1", "!", "1", "!" },
 	{ KEY_TWO,   "2", "@", "2", "\"" },
 	{ KEY_THREE, "3", "#", "3", "№" },
@@ -1563,7 +1663,7 @@ KeyMapping KeysMapping[49] = {
 	{ KEY_RIGHT_BRACKET, "]", "}", "ъ", "Ъ" },
 	{ KEY_BACKSLASH, "\\", "|", "\\", "/" },
 	{ KEY_GRAVE, "`", "~", "ё", "Ё" },
-	// { KEY_ENTER, "", "\n", "", "\n"} // WIP
+	//{ KEY_ENTER, "\n", "\n", "\n", "\n"} // WIP
 };
 
 enum TextBoxType {
@@ -1811,6 +1911,8 @@ public:
 		getRealObject2Dposition();
 		eventHandler();
 
+		SameUpdate();
+
 		if (updateChildrenZIndex) {
 			updateChildren(this);
 		}
@@ -1922,6 +2024,7 @@ public:
 							}
 							if (!allowed) continue;
 						}
+						
 						updateCharOffsets();
 						int bytePos = (CursorIndex < (int)charOffsets.size()) ? charOffsets[CursorIndex] : Text.size();
 						Text = Text.substr(0, bytePos) + std::string(keyValue) + Text.substr(bytePos);
@@ -2337,6 +2440,8 @@ public:
 		RelativeSCalculated = false;
 		RelativePCalculated = false;
 		if (!Visible) return;
+
+		SameUpdate();
 
 		if (updateChildrenZIndex) {
 			updateChildren(this);
@@ -3059,11 +3164,7 @@ void SUI_SetWindowSize(int newW, int newH) {
 }
 
 void SUI_SetWindowPosition(int newX, int newY) {
-#ifdef __linux__
 	SetWindowPosition(newX, newY);
-#elif _WIN32
-	SetWindowPosition(newX, newY);
-#endif
 }
 
 void start(Instance& StartInstance, Vector3 inf, const char* name, const char* iconName = "", unsigned int flags = 4) {
@@ -3090,13 +3191,8 @@ void start(Instance& StartInstance, Vector3 inf, const char* name, const char* i
 	while (programRunning and !WindowShouldClose()) {
 		if (IsWindowFullscreen()) ToggleFullscreen();
 		if (changeWindowSizeB) {
-#ifdef __linux__
 			SetWindowSize(changeWindowSize.x, changeWindowSize.y);
 			changeWindowSizeB = false;
-#elif _WIN32
-			SetWindowSize(changeWindowSize.x, changeWindowSize.y);
-			changeWindowSizeB = false;
-#endif
 		}
 
 		winWidth = GetScreenWidth(); winHeight = GetScreenHeight();
@@ -3121,41 +3217,50 @@ void start(Instance& StartInstance, Vector3 inf, const char* name, const char* i
 		Vector2 mousePosition = GetMousePosition();
 		Tasks::UpdateTasks(dt);
 
-		std::function<Object2D* (Instance*)> getTop = [&mousePosition](Instance* parent) {
-			Object2D* result = nullptr;
+		Object2D* best = nullptr;
+		int maxDepth = -1;
 
-			while (true) {
-				Object2D* next = nullptr;
+		std::function<bool(Instance*, int)> getTop = [&getTop, &mousePosition, &best, &maxDepth](Instance* parent, int localDepth) -> bool {
+			bool foundInThisBranch = false;
 
-				for (auto it = parent->Children.rbegin(); it != parent->Children.rend(); ++it) {
-					auto obj = dynamic_cast<Object2D*>(*it);
-					if (!obj or !obj->Visible) continue;
+			for (auto it = parent->Children.rbegin(); it != parent->Children.rend(); ++it) {
+				Instance* child = *it;
+				auto obj = dynamic_cast<Object2D*>(child);
+				
+				int nextDepth = localDepth;
+				bool isTarget = false;
 
-					if (!obj->pointInObject(mousePosition)) continue;
-
-					if (obj->Active) {
-						next = obj;
-						break;
-					}
-
-					if (!next) {
-						next = obj;
+				if (obj) {
+					if (!obj->Visible) continue;
+					nextDepth = localDepth + 1;
+					if (obj->Active and obj->pointInObject(mousePosition)) {
+						isTarget = true;
 					}
 				}
 
-				if (!next) break;
+				if (getTop(child, nextDepth)) {
+					foundInThisBranch = true;
+				}
 
-				if (next->Active)
-					result = next;
+				if (isTarget) {
+					if (nextDepth > maxDepth or (nextDepth == maxDepth and (!best or obj->ZIndex > best->ZIndex))) {
+						best = obj;
+						maxDepth = nextDepth;
+						foundInThisBranch = true;
+					}
+				}
 
-				parent = next;
+				if (foundInThisBranch) {
+					return true;
+				}
 			}
 
-			return result;
-			};
+			return foundInThisBranch;
+		};
 
+		getTop(&StartInstance, 0);
 		PreviousHigherObject = higherObject;
-		higherObject = getTop(&StartInstance);
+		higherObject = best;
 
 		if (IsKeyPressed(KEY_F1)) { toggleFPS(&StartInstance); }
 		if (IsKeyPressed(KEY_F2)) { debug::toggleDebug(&StartInstance); }

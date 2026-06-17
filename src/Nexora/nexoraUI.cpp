@@ -18,9 +18,12 @@ Instance* StartInstance = nullptr;
 bool Resizing_EW = false;
 bool Beamed_Cursor = false;
 Object2D* ChatTemplate = nullptr;
+Object2D* TextMessageTemplate = nullptr;
 ScrollFrame* CurrentChatScroll = nullptr;
+Folder* CurrentChatScrollMessages = nullptr;
 size_t CurrentChatID = 0;
 Object2D* settingsFrame = nullptr;
+TextBox* ChatTextBox = nullptr;
 
 static inline bool Authenticated = false;
 static inline bool ChatsUpdated = false;
@@ -152,143 +155,6 @@ size_t string_to_size_t(std::string s) {
 	}
 
 	return n;
-}
-
-class AsyncData {
-	const char* ptr = nullptr;
-	QueryType type = SignUp;
-	size_t size = 0;
-	std::pair<const char*, size_t> output_data{};
-	bool completed = false;
-
-	std::function<void(std::pair<const char*, size_t>)> completedFunction;
-	std::function<void(void)> sendedFunction;
-public:
-	bool deleteOnCompleted = true;
-
-	bool isCompleted() const {
-		return completed;
-	}
-
-	std::pair<const char*, size_t> getOutput() const {
-		return output_data;
-	}
-
-	void send() {
-		std::thread a([this]() {
-
-			bool completed = false;
-			if (sendedFunction) {
-				sendedFunction();
-			}
-
-			output_data = get_data(ptr, type, size);
-			completed = true;
-
-			if (completedFunction) {
-				completedFunction(output_data);
-			}
-
-			if (deleteOnCompleted) {
-				delete this;
-			}
-			});
-		a.detach();
-		return;
-	}
-
-	void Completed(std::function<void(std::pair<const char*, size_t>)> f) {
-		completedFunction = f;
-	}
-
-	void Sended(std::function<void(void)> f) {
-		sendedFunction = f;
-	}
-
-	AsyncData(const char* c, QueryType t, size_t s) : ptr(c), type(t), size(s) {}
-};
-
-
-Chat* deserializeChat(std::pair<const char*, size_t> data) {
-	std::string tmp(data.first, data.second);
-	std::istringstream in(tmp);
-
-	size_t id, owner, time, len;
-	std::string name;
-
-	in >> id >> owner >> time >> len;
-	in.get();
-	name.resize(len);
-	in.read(name.data(), len);
-
-	return new Chat(id, name, owner, time);
-}
-
-std::vector<Chat*> deserializeChats(std::pair<const char*, size_t> data) {
-	const char* ptr = data.first;
-	const char* end = ptr + data.second;
-
-	if (!strcmp(data.first, "e1")) {
-		std::cout << "Error while deserialize chats" << std::endl;
-		return {};
-	}
-
-	if (!strcmp(data.first, "w1")) {
-		std::cout << "No chats to deserialize" << std::endl;
-		return {};
-	}
-
-	int to_read = sizeof(size_t);
-	if (ptr + sizeof(size_t) > end) abort();
-
-	size_t count;
-	memcpy(&count, ptr, sizeof(count));
-	ptr += sizeof(count);
-
-	std::vector<Chat*> result;
-
-	for (size_t i = 0; i < count; i++) {
-		if (ptr + sizeof(size_t) > end) abort();
-
-		size_t size;
-		memcpy(&size, ptr, sizeof(size));
-		ptr += sizeof(size);
-
-		if (ptr + size > end) abort();
-
-		std::string chunk(ptr, size);
-		ptr += size;
-
-		result.push_back(deserializeChat({ chunk.data(), chunk.size() }));
-	}
-
-	return result;
-}
-
-Client* deserializeClient(const std::string& data) {
-	std::istringstream in(data);
-	size_t id, lastActivity, len1, len2, len3;
-	std::string name, login, icon;
-
-	in >> id >> lastActivity >> len1;
-	in.get();
-	name.resize(len1);
-	in.read(name.data(), len1);
-	in >> len2;
-	in.get();
-	login.resize(len2);
-	in.read(login.data(), len2);
-	in >> len3;
-	in.get();
-	icon.resize(len3);
-	in.read(icon.data(), len3);
-
-	Client* c = new Client(name, id);
-	c->lastActivity = lastActivity;
-	c->avatar.loadIcon(icon.data(), icon.size());
-	c->login = login;
-
-	return c;
 }
 
 void onClientPtrChanged() {
@@ -438,17 +304,98 @@ void loadChats(const size_t chatID, std::function<void(void)> f) { // chatID == 
 }
 
 void changeCurrentChat(const size_t id) {
+	if (CurrentChatID == id) return;
+	CurrentChatID = id;
 	loadChatsMutex.lock();
 	auto it = LoadedChats.find(id);
 	if (it != LoadedChats.end()) {
 		Chat* chat = it->second;
 		loadChatsMutex.unlock();
+
+		chat->LoadMessages(100, 0, [chat](){
+			if (!CurrentChatScrollMessages) {
+				CurrentChatScrollMessages = new Folder(CurrentChatScroll);
+			}
+			CurrentChatScrollMessages->deleteAllChildren();
+
+			CurrentChatScroll->Visible = true;
+			int i = 0;
+			size_t previousID = 0;
+			size_t lastPosSize = 5;
+			for (auto [id, m] : chat->GetMessages()) {
+				if (!TextMessageTemplate) {
+					TextMessageTemplate = new Object2D(CurrentChatScroll);
+					TextMessageTemplate->Active = true;
+					TextMessageTemplate->SizeOFFSET = {390, 55};
+					TextMessageTemplate->PositionOFFSET.x = 5;
+					TextMessageTemplate->Roundness = 0.3;
+					TextMessageTemplate->BackgroundColor = mulColor(DEFAULT_BACKGROUND, 1);
+					TextMessageTemplate->Visible = false;
+
+					TextLabel* text = new TextLabel(TextMessageTemplate);
+					text->BackgroundTransparency = 1;
+					text->BackgroundColor = mulColor(DEFAULT_BACKGROUND, 0.9);
+					text->Roundness = 0.4;
+					text->TextColor = DEFAULT_TEXT;
+					text->SizeOFFSET.y = 30;
+					text->Size.x = 1;
+					text->PositionOFFSET.y = 25;
+					text->PositionOFFSET.x = 2;
+					text->SizeOFFSET.x = -4;
+					text->TextSize = 30;
+					text->TextAnchor = TextAnchorEnum::W;
+					text->Name = "Text";
+					text->font = "SegoeB";
+
+					TextLabel* cl_name = new TextLabel(TextMessageTemplate);
+					cl_name->BackgroundTransparency = 1;
+					cl_name->TextColor = DEFAULT_TEXT;
+					cl_name->SizeOFFSET.y = 25;
+					cl_name->Size.x = 1;
+					cl_name->TextAnchor = TextAnchorEnum::W;
+					cl_name->Name = "Name";
+					cl_name->TextSize = 25;
+					cl_name->font = "SegoeB";
+				}
+				
+				Object2D* t = TextMessageTemplate->Clone();
+				t->Name = std::to_string(id);
+				t->Visible = true;
+				t->setParent(CurrentChatScrollMessages);
+				TextLabel* text = static_cast<TextLabel*>(t->findChild("Text"));
+				TextLabel* name = static_cast<TextLabel*>(t->findChild("Name"));
+				text->Text = std::string(m->getData().first, m->getData().second);
+				t->PositionOFFSET.y = lastPosSize;
+
+				if (previousID == m->ClientID) {
+					t->SizeOFFSET.y = 30;
+					t->Roundness = 0.4;
+					text->Size = {1, 0};
+					text->SizeOFFSET.y = 30;
+					text->PositionOFFSET.y = 0;
+					name->Visible = false;
+					t->PositionOFFSET.x += 10;
+				} else {
+					name->Text = " " + std::to_string(m->ClientID);
+				}
+
+				asyncDataMutex.lock();
+				if (m->ClientID == (*getClientPtr())->userID) {
+					t->BackgroundColor = mulColor(DEFAULT_BACKGROUND, 1.4);
+				}
+				asyncDataMutex.unlock();
+
+				lastPosSize = t->SizeOFFSET.y + t->PositionOFFSET.y + 5;
+				previousID = m->ClientID;
+				i++;
+			}
+		});
 	}
 	else {
 		loadChatsMutex.unlock();
 		loadChats(id, [id]() {
 			changeCurrentChat(id);
-			});
+		});
 	}
 }
 
@@ -1320,21 +1267,24 @@ int profileUI() {
 	changeImage->SetMouse1HoldEnd([](Object2D* t) {
 		if (o) return;
 		std::thread thr([]() {
+			
 			o_m.lock();
 			o = true;
 			o_m.unlock();
+
 			#ifdef _WIN32
-			std::wstring path = GetFile();
+				std::wstring path = GetFile();
 			#elif __linux__
-			std::string path = GetFile();
+				std::string path = GetFile();
 			#endif
-			if (path.empty()) {
-				return;
-			}
 
 			o_m.lock();
 			o = false;
 			o_m.unlock();
+
+			if (path.empty()) {
+				return;
+			}
 			
 			try {
 				std::filesystem::path file = path;
@@ -1361,11 +1311,11 @@ int profileUI() {
 					data_file.read(input, size);
 				}
 				
-				if (size > 10_mb) {
+				if (size > 3_mb) {
 					SendInfoMessage("File size", "Avatar size must be < 10mb", WARN);
 					return;
 				}
-				
+
 				auto data = new AsyncData(input, UPDATE_AVATAR, size);
 				data->Completed([input](std::pair<const char*, size_t> output){
 					delete[] input;
@@ -1457,6 +1407,7 @@ int profileUI() {
 	ProfileName->CursorColor = mulColor(DEFAULT_TEXT, 0.9);
 	ProfileName->TextAnchor = TextAnchorEnum::W;
 	ProfileName->Type = Viewported;
+	ProfileName->ZIndex = 20;
 	ProfileName->OnTextChanged([ProfileName, ConfirmName, NameLowerLine](Object2D* t) {
 		updAnim();
 	});
@@ -1592,19 +1543,54 @@ int generalUI() {
 	Background->SizeOFFSET = { 0,-BAR_SIZE };
 	Background->PositionOFFSET = { 0,BAR_SIZE };
 	Background->BackgroundColor = DEFAULT_BACKGROUND;
+	Background->Active = true;
 	Background->ZIndex = 10;
 
 	ImageLabel* ChatBackground = new ImageLabel(Background);
 	ChatBackground->BackgroundColor = DEFAULT_BACKGROUND;
+	ChatBackground->Active = true;
 	ChatBackground->Size.y = 1;
 
 	CurrentChatScroll = new ScrollFrame(ChatBackground);
 	CurrentChatScroll->Active = true;
-	CurrentChatScroll->Animated = true;
+	CurrentChatScroll->Animated = false;
 	CurrentChatScroll->Size.y = 1;
 	CurrentChatScroll->Size.x = 1;
-	CurrentChatScroll->SizeOFFSET.y = -90;
-	CurrentChatScroll->BackgroundTransparency = 1;
+	CurrentChatScroll->SizeOFFSET.y = -80;
+	CurrentChatScroll->PositionOFFSET.y = 30;
+	CurrentChatScroll->BackgroundTransparency = 0.5;
+	CurrentChatScroll->CanvasSize.y = 0;
+	CurrentChatScroll->ScrollSpeed = 0;
+	CurrentChatScroll->ScrollSpeedOFFSET = 200;
+	CurrentChatScroll->SliderColor = {180,180,180,255};
+ 
+	ImageLabel* MessageSend = new ImageLabel(ChatBackground);
+	MessageSend->SizeOFFSET = {50,50};
+	MessageSend->Position = {1,1};
+	MessageSend->PositionOFFSET = {-50,-50};
+	MessageSend->setImage(getImage("send"));
+	MessageSend->ImageTransparency = 1;
+	MessageSend->BackgroundColor = mulColor(DEFAULT_BACKGROUND, 0.95);
+	MessageSend->ImageColor = DEFAULT_TEXT;
+
+	ChatTextBox = new TextBox(ChatBackground);
+	ChatTextBox->SizeOFFSET.y = 50;
+	ChatTextBox->SizeOFFSET.x = -50;
+	ChatTextBox->Size.x = 1;
+	ChatTextBox->Position.y = 1;
+	ChatTextBox->PositionOFFSET.y = -50;
+	ChatTextBox->TextAnchor = TextAnchorEnum::W;
+	ChatTextBox->PlaceholderText = " Write a message...";
+	ChatTextBox->BackgroundColor = mulColor(DEFAULT_BACKGROUND, 0.95);
+	ChatTextBox->TextSize = 40;
+	ChatTextBox->font = "SegoeB";
+	ChatTextBox->Active = true;
+	ChatTextBox->CursorColor = mulColor(DEFAULT_TEXT, 0.7);
+	ChatTextBox->CursorSize = 1;
+	ChatTextBox->TextColor = mulColor(DEFAULT_TEXT, 0.8);
+	ChatTextBox->OnTextChanged([MessageSend](Object2D* t){
+		Animate::Create(&MessageSend->ImageTransparency, 0.1, ChatTextBox->GetText().size() == 0);
+	});
 
 	TextLabel* UpperChatName = new TextLabel(ChatBackground);
 	UpperChatName->TextColor = DEFAULT_TEXT;
@@ -1792,7 +1778,7 @@ int generalUI() {
 
 	static bool resizing = false;
 	static int max = 1000;
-	static int min = 200;
+	static int min = 400;
 	static bool isMinimal = false;
 
 	static auto setFullScrollMode = [ChatScroll]() {
@@ -1852,8 +1838,8 @@ int generalUI() {
 			resizing = false;
 		}
 
-		if (ChatScroll->SizeOFFSET.x + 200 > winWidth) {
-			ChatScroll->SizeOFFSET.x = winWidth - 200;
+		if (ChatScroll->SizeOFFSET.x + min > winWidth) {
+			ChatScroll->SizeOFFSET.x = winWidth - min;
 		}
 
 		if (resizing) {
@@ -1861,8 +1847,8 @@ int generalUI() {
 
 			if (newPos > 1000) newPos = 1000;
 			if (newPos < 200 and newPos > 100) newPos = 200;
-			if (newPos + 200 > winWidth) {
-				newPos = winWidth - 200;
+			if (newPos + min > winWidth) {
+				newPos = winWidth - min;
 			}
 
 			if (newPos <= 100) {
@@ -1943,7 +1929,7 @@ int generalUI() {
 		Animate::Create(&t->BackgroundTransparency, 0.125, 0.9);
 		Animate::Create(&ChatIcon->SizeOFFSET, 0.055, { CHAT_SIZE * 0.95, CHAT_SIZE * 0.95 });
 		Animate::Create(&ChatName->TextColor, 0.055, { mulColor(DEFAULT_TEXT, 1) });
-		});
+	});
 	ChatTemplate->SetMouseLeave([](Object2D* t) {
 		ImageLabel* ChatIcon = static_cast<ImageLabel*>(t->findChild("ChatIcon"));
 		TextLabel* ChatName = static_cast<TextLabel*>(t->findChild("ChatName"));
@@ -1951,7 +1937,15 @@ int generalUI() {
 		Animate::Create(&t->BackgroundTransparency, 0.125, 1);
 		Animate::Create(&ChatIcon->SizeOFFSET, 0.055, { CHAT_SIZE * 0.8, CHAT_SIZE * 0.8 });
 		Animate::Create(&ChatName->TextColor, 0.055, { mulColor(DEFAULT_TEXT, 0.8) });
-		});
+	});
+	ChatTemplate->SetMouse1HoldEnd([](Object2D* t){
+		Chat* chat = static_cast<AddressValue<Chat>*>(t->findChildOfClass(ADDRESS_VALUE))->Value;
+		if (chat) {
+			changeCurrentChat(chat->ChatID);
+		} else {
+			SendInfoMessage("Chat load", "Something went wrong (c1)", ERROR);
+		}
+	});
 
 	new ChangedSignal<bool>(Authenticated, [&]() {
 		if (Authenticated) {
@@ -1996,6 +1990,9 @@ int generalUI() {
 				ImageLabel* icon = static_cast<ImageLabel*>(newChat->findChild("ChatIcon"));
 				TextLabel* name = static_cast<TextLabel*>(newChat->findChild("ChatName"));
 				TextLabel* lastMsg = static_cast<TextLabel*>(newChat->findChild("ChatLastMsg"));
+
+				AddressValue<Chat>* chatPtr = new AddressValue<Chat>(newChat);
+				chatPtr->Value = chat; 
 
 				if (name) {
 					name->Text = chat->Name;
@@ -2127,6 +2124,7 @@ void initialInterface() {
 	loadImage("change_pencil", "textures/pencil.png");
 	loadImage("checked", "textures/checked.png");
 	loadImage("textbox_lower_line", "textures/textbox_lower_line.png");
+	loadImage("send", "textures/send.png");
 
 	int barReturn = initUpperBar();
 	if (barReturn) {
