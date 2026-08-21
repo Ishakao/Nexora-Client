@@ -1,1 +1,1 @@
-g++ src/Nexora/Nexora.cpp src/Nexora/nexoraNETWORK.cpp src/Nexora/nexoraUI.cpp include/apiUTILS.cpp lib/libraylib.a -o nexora -lGL -lm -lpthread -ldl -lrt -lX11     -lssl -lcrypto -lglfw -w $(pkg-config --cflags --libs gtk+-3.0) -std=c++20
+g++ src/Nexora.cpp src/nexoraNETWORK.cpp src/nexoraUI.cpp include/apiUTILS.cpp lib/libraylib.a -o nexora -lGL -lm -lpthread -ldl -lrt -lX11     -lssl -lcrypto -lglfw -w $(pkg-config --cflags --libs gtk+-3.0) -std=c++20
