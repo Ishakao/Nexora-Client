@@ -87,7 +87,7 @@ float GetMouseScreenPositionY() {
 		ofn.lStructSize = sizeof(ofn);
 		ofn.lpstrFile = filename;
 		ofn.nMaxFile = MAX_PATH;
-		ofn.lpstrFilter = ofn.lpstrFilter = L"Images (*.jpg;*.jpeg;*.png)\0*.jpg;*.jpeg;*.png\0All files (*.*)\0*.*\0";;
+		ofn.lpstrFilter = L"Images (*.jpg;*.jpeg;*.png)\0*.jpg;*.jpeg;*.png\0All files (*.*)\0*.*\0";;
 		ofn.Flags = OFN_PATHMUSTEXIST | OFN_FILEMUSTEXIST;
 
 		if (GetOpenFileName(&ofn)) {
