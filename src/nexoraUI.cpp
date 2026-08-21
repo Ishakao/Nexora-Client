@@ -1,0 +1,2145 @@
+#define _SILENCE_CXX20_CODECVT_HEADER_DEPRECATION_WARNING  
+#define _SILENCE_ALL_CXX17_DEPRECATION_WARNINGS  
+#define _SHOW_NEXORA
+#define BAR_SIZE 25
+#define CHAT_SIZE 60
+#include "../include/simpleUI.h"
+#include "nexoraNETWORK.h"
+#include <thread>
+#include <mutex>
+#include <string>
+#include <filesystem>
+#include <fstream>
+#include <locale>
+#include <codecvt>
+const int BAR_BUTTONS_SIZE = 45;
+const Color DEFAULT_BACKGROUND = { 42,42,42,255 };
+const Color DEFAULT_TEXT = { 226,200,54,255 };
+const int minW = 560;
+const int minH = 520;
+const std::string PATH_TO_SOURCES = "";
+
+Instance* StartInstance = nullptr;
+bool Resizing_EW = false;
+bool Beamed_Cursor = false;
+Object2D* ChatTemplate = nullptr;
+Object2D* TextMessageTemplate = nullptr;
+ScrollFrame* CurrentChatScroll = nullptr;
+Folder* CurrentChatScrollMessages = nullptr;
+size_t CurrentChatID = 0;
+Object2D* settingsFrame = nullptr;
+TextBox* ChatTextBox = nullptr;
+
+static inline bool Authenticated = false;
+static inline bool ChatsUpdated = false;
+unsigned long clientId = 0;
+
+std::recursive_mutex asyncDataMutex;
+
+enum WhereOnUI {
+	AUTH = 0,
+	GENERAL,
+	PROFILE,
+	SETTINGS,
+	LEFT_MENU
+};
+
+namespace GlobalStates {
+	WhereOnUI UIstate = AUTH;
+};
+
+enum InfoMessageType {
+	SUCCESS = 0,
+	WARN,
+	ERROR
+};
+
+void SendInfoMessage(const std::string& title, const std::string& text, InfoMessageType type) {
+	if (!StartInstance) return;
+
+	static std::mutex mtx;
+
+	Color color = (type == SUCCESS ? Color{ 141, 233, 147, 255 } : ((type == WARN) ? Color{ 243, 187, 31, 255 } : Color{ 228, 106, 92, 255 }));
+	static std::vector<Object2D*> messages;
+	Object2D* msg = new Object2D(StartInstance);
+	msg->BackgroundColor = mulColor(DEFAULT_BACKGROUND, 0.8);
+	msg->ZIndex = 999;
+	msg->Active = true;
+	msg->BorderColor = color;
+	msg->BorderThickness = 3;
+	msg->Position = { 1, 1 };
+	msg->SizeOFFSET = { 225, 75 };
+	msg->PositionOFFSET = { 15, -85 };
+	msg->Roundness = 0.2;
+	msg->BackgroundTransparency = 0.1;
+	msg->BorderTransparency = 0.1;
+	TextLabel* tit = new TextLabel(msg);
+	tit->Size = { 1, 0.35 };
+	tit->TextAnchor = TextAnchorEnum::W;
+	tit->Text = " " + title + " ";
+	tit->TextColor = color;
+	tit->TextTransparency = 0.2;
+	tit->FontFace = "SegoeB";
+	tit->BackgroundTransparency = 1;
+	TextLabel* tex = new TextLabel(msg);
+	tex->Size = { 1, 0.65 };
+	tex->Position = { 0, 0.35 };
+	tex->TextAnchor = TextAnchorEnum::NW;
+	tex->Text = " " + text + " ";
+	tex->TextColor = color;
+	tex->TextTransparency = 0.2;
+	tex->FontFace = "SegoeB";
+	tex->BackgroundTransparency = 1;
+
+	Animate::Create(&msg->PositionOFFSET.x, 0.15, -250);
+	mtx.lock();
+	for (int i = 0; i < messages.size(); i++) {
+		Object2D* m = messages[i];
+		Animate::Create(&m->PositionOFFSET.y, 0.125, -85 * ((long)messages.size() - i + 1));
+	}
+	messages.push_back(msg);
+	mtx.unlock();
+
+	new Tasks::Task(8, [msg]() {
+		mtx.lock();
+		for (int i = 0; i < messages.size(); i++) {
+			Object2D* m = messages[i];
+			if (m == msg) {
+				messages.erase(messages.begin() + i);
+				auto a = Animate::Create(&m->PositionOFFSET.x, 0.15, 15);
+				a->Completed = [m]() {
+					Delete(m);
+					};
+				break;
+			}
+		}
+		mtx.unlock();
+		});
+}
+
+size_t string_to_size_t(std::string s) {
+	size_t n = 0;
+	for (int i = 0; i < s.size(); i++) {
+		if (s[i] < '0' or s[i] > '9') {
+			break;
+		}
+
+		n *= 10;
+		n += s[i] - '0';
+	}
+
+	return n;
+}
+
+std::string WstringToString(const std::wstring& wstr) {
+	std::wstring_convert<std::codecvt_utf8<wchar_t>> converter;
+	return converter.to_bytes(wstr);
+}
+
+void onClientPtrChanged() {
+	if (*getClientPtr()) {
+			asyncDataMutex.lock();
+			dynamic_cast<TextLabel*>(StartInstance->findFirstDescendant("PROFILE_NAME"))->Text = (*getClientPtr())->userName;
+			dynamic_cast<TextLabel*>(StartInstance->findFirstDescendant("UserID"))->Text = "UID: " + std::to_string((*getClientPtr())->userID);
+			dynamic_cast<TextBox*>(StartInstance->findFirstDescendant("PROFILE_NAME1"))->SetText((*getClientPtr())->userName);
+			dynamic_cast<TextLabel*>(StartInstance->findFirstDescendant("ProfileLogin"))->Text = "@" + (*getClientPtr())->login;
+
+			if ((*getClientPtr())->avatar.size() <= 1) {
+				ImageLabel* ProfileImage = dynamic_cast<ImageLabel*>(StartInstance->findFirstDescendant("PROFILE_IMAGE"));
+				ProfileImage->setImage("profile");
+				ProfileImage->ImageColor = DEFAULT_TEXT;
+
+				ImageLabel* ProfileImage2 = dynamic_cast<ImageLabel*>(StartInstance->findFirstDescendant("ProfileImage"));
+				ProfileImage2->setImage("profile");
+				ProfileImage2->ImageColor = DEFAULT_TEXT;
+			} else {
+				auto ic = (*getClientPtr())->avatar.getIcon();
+				
+				std::vector<unsigned char> icon(ic.second);
+				memcpy(icon.data(), ic.first, ic.second);
+
+				ImageLabel* ProfileImage = dynamic_cast<ImageLabel*>(StartInstance->findFirstDescendant("PROFILE_IMAGE"));
+				ProfileImage->UpdateFromMemory(".jpg", icon);
+				ProfileImage->ImageColor = { 255,255,255,255 };
+
+				ImageLabel* ProfileImage2 = dynamic_cast<ImageLabel*>(StartInstance->findFirstDescendant("ProfileImage"));
+				ProfileImage2->UpdateFromMemory(".jpg", icon);
+				ProfileImage2->ImageColor = { 255,255,255,255 };
+			}
+
+			asyncDataMutex.unlock();
+		}
+}
+
+void UPDATE_USER_DATA() {
+	std::string string_id = std::to_string(clientId);
+	char* input2 = new char[string_id.size() + 1];
+	memcpy(input2, string_id.data(), string_id.size());
+	input2[string_id.size()] = '\0';
+
+	AsyncData* data2 = new AsyncData(input2, QueryType::GET_USER_INFO, string_id.size() + 1);
+	data2->Completed([input2](std::pair<const char*, size_t> output1) {
+		if (!output1.first) {
+			delete[] input2;
+			return;
+		}
+		
+		if (!strcmp(output1.first, "e1")) {
+			std::cout << "No client with id " << input2 << std::endl;
+			delete[] output1.first;
+			delete[] input2;
+			return;
+		}
+
+		delete[] input2;
+
+		asyncDataMutex.lock();
+		if (*getClientPtr()) {
+			delete(*getClientPtr());
+		}
+
+		*getClientPtr() = deserializeClient(std::string(output1.first, output1.second));
+		asyncDataMutex.unlock();
+
+		onClientPtrChanged();
+
+		delete[] output1.first;
+	});
+	data2->send();
+}
+
+
+std::mutex loadChatsMutex;
+
+void loadChats(const size_t chatID, std::function<void(void)> f) { // chatID == 0: all chats
+	if (chatID) {
+		std::string stringID = std::to_string(chatID);
+		char* input = new char[stringID.size() + 1];
+		memcpy(input, stringID.data(), stringID.size());
+		input[stringID.size()] = '\0';
+
+		AsyncData* chat = new AsyncData(input, GET_CHAT, stringID.size());
+		chat->Completed([f, input, chatID](std::pair<const char*, size_t> data) {
+			Chat* ch = deserializeChat(data);
+			size_t id = ch->ChatID;
+			if (id == chatID) {
+				std::cout << "Chat " << id << " loaded successfully" << std::endl;
+			}
+			loadChatsMutex.lock();
+			auto it = LoadedChats.find(id);
+			if (it != LoadedChats.end()) {
+				it->second->Name = ch->Name;
+				it->second->OwnerID = ch->OwnerID;
+				delete ch;
+			}
+			else {
+				LoadedChats.insert({ id, ch });
+			}
+			loadChatsMutex.unlock();
+
+			f();
+			delete[] input;
+			delete[] data.first;
+			});
+		chat->send();
+	}
+	else {
+		AsyncData* chat = new AsyncData(nullptr, GET_CHATS, 0);
+		chat->Completed([f](std::pair<const char*, size_t> data) {
+			if (!data.first) {
+				std::cout << "No chats data" << std::endl;
+				return;
+			}
+
+			if (!memcmp(data.first, "e1", 3)) {
+				std::cout << "Chats e1 error" << std::endl;
+				delete[] data.first;
+				return;
+			}
+
+			std::vector<Chat*> chats = deserializeChats(data);
+			if (chats.size()) {
+				loadChatsMutex.lock();
+				for (Chat* c : chats) {
+					size_t id = c->ChatID;
+					auto it = LoadedChats.find(id);
+					if (it != LoadedChats.end()) {
+						it->second->Name = c->Name;
+						it->second->OwnerID = c->OwnerID;
+						delete c;
+					}
+					else {
+						LoadedChats.insert({ id, c });
+					}
+				}
+				loadChatsMutex.unlock();
+			}
+
+			f();
+			delete[] data.first;
+			});
+		chat->send();
+	}
+}
+
+void changeCurrentChat(const size_t id) {
+	if (CurrentChatID == id) return;
+	CurrentChatID = id;
+	loadChatsMutex.lock();
+	auto it = LoadedChats.find(id);
+	if (it != LoadedChats.end()) {
+		Chat* chat = it->second;
+		loadChatsMutex.unlock();
+
+		chat->LoadMessages(100, 0, [chat](){
+			if (!CurrentChatScrollMessages) {
+				CurrentChatScrollMessages = new Folder(CurrentChatScroll);
+			}
+			CurrentChatScrollMessages->deleteAllChildren();
+
+			CurrentChatScroll->Visible = true;
+			int i = 0;
+			size_t previousID = 0;
+			size_t lastPosSize = 5;
+			for (auto [id, m] : chat->GetMessages()) {
+				if (!TextMessageTemplate) {
+					TextMessageTemplate = new Object2D(CurrentChatScroll);
+					TextMessageTemplate->Active = true;
+					TextMessageTemplate->SizeOFFSET = {390, 55};
+					TextMessageTemplate->PositionOFFSET.x = 5;
+					TextMessageTemplate->Roundness = 0.3;
+					TextMessageTemplate->BackgroundColor = mulColor(DEFAULT_BACKGROUND, 1);
+					TextMessageTemplate->Visible = false;
+
+					TextLabel* text = new TextLabel(TextMessageTemplate);
+					text->BackgroundTransparency = 1;
+					text->BackgroundColor = mulColor(DEFAULT_BACKGROUND, 0.9);
+					text->Roundness = 0.4;
+					text->TextColor = DEFAULT_TEXT;
+					text->SizeOFFSET.y = 30;
+					text->Size.x = 1;
+					text->PositionOFFSET.y = 25;
+					text->PositionOFFSET.x = 2;
+					text->SizeOFFSET.x = -4;
+					text->TextSize = 30;
+					text->TextAnchor = TextAnchorEnum::W;
+					text->Name = "Text";
+					text->FontFace = "SegoeB";
+
+					TextLabel* cl_name = new TextLabel(TextMessageTemplate);
+					cl_name->BackgroundTransparency = 1;
+					cl_name->TextColor = DEFAULT_TEXT;
+					cl_name->SizeOFFSET.y = 25;
+					cl_name->Size.x = 1;
+					cl_name->TextAnchor = TextAnchorEnum::W;
+					cl_name->Name = "Name";
+					cl_name->TextSize = 25;
+					cl_name->FontFace = "SegoeB";
+				}
+				
+				Object2D* t = TextMessageTemplate->Clone();
+				t->Name = std::to_string(id);
+				t->Visible = true;
+				t->setParent(CurrentChatScrollMessages);
+				TextLabel* text = static_cast<TextLabel*>(t->findChild("Text"));
+				TextLabel* name = static_cast<TextLabel*>(t->findChild("Name"));
+				text->Text = std::string(m->getData().first, m->getData().second);
+				t->PositionOFFSET.y = lastPosSize;
+
+				if (previousID == m->ClientID) {
+					t->SizeOFFSET.y = 30;
+					t->Roundness = 0.4;
+					text->Size = {1, 0};
+					text->SizeOFFSET.y = 30;
+					text->PositionOFFSET.y = 0;
+					name->Visible = false;
+					t->PositionOFFSET.x += 10;
+				} else {
+					name->Text = " " + std::to_string(m->ClientID);
+				}
+
+				asyncDataMutex.lock();
+				if (m->ClientID == (*getClientPtr())->userID) {
+					t->BackgroundColor = mulColor(DEFAULT_BACKGROUND, 1.4);
+				}
+				asyncDataMutex.unlock();
+
+				lastPosSize = t->SizeOFFSET.y + t->PositionOFFSET.y + 5;
+				previousID = m->ClientID;
+				i++;
+			}
+		});
+	}
+	else {
+		loadChatsMutex.unlock();
+		loadChats(id, [id]() {
+			changeCurrentChat(id);
+		});
+	}
+}
+
+size_t loadMessages(const size_t chatID, const size_t lastLoadedMsgId) {
+	return 0;
+}
+
+int initUpperBar() {
+	static bool shiftWindow = false;
+	static Vector2 dragOffset = { 0, 0 };
+
+	Object2D* upperBar = new Object2D(StartInstance);
+	upperBar->ZIndex = 1000;
+	upperBar->Name = "Upper Bar";
+	upperBar->Active = true;
+	upperBar->Position = { 0,0 };
+	upperBar->Size = { 1, 0 };
+	upperBar->SizeOFFSET = { 0, BAR_SIZE };
+	upperBar->BackgroundColor = { 42,42,42,255 };
+	static bool dragging = false;
+	static Vector2 startMouseScreen = { 0,0 };
+	static Vector2 startWinPos = { 0,0 };
+
+	static double cooldown = 0;
+	static bool tapped = false;
+
+	static Vector2 lastMinimizedSize{};
+
+	upperBar->AddEvent(MOUSE_HOLD_START, [](Instance* t) {
+		if (cooldown > 0.3) tapped = false;
+		if (!IsWindowMaximized() and !tapped) {
+			tapped = true;
+			cooldown = 0;
+		} else if (!IsWindowMaximized() and cooldown < 0.3 and tapped) {
+			lastMinimizedSize = { (float)winWidth, (float)winHeight };
+			MaximizeWindow();
+			tapped = false;
+			return;
+		}
+
+		if (GetMousePosition().y <= 2 and !IsWindowMaximized()) return;
+		startMouseScreen = GetMouseScreenPosition();
+		startWinPos = GetWindowPosition();
+		if (IsWindowMaximized()) {
+			Vector2 relMouse = { mousePosition.x / winWidth, mousePosition.y / winHeight };
+			RestoreWindow();
+			SUI_SetWindowPosition(startMouseScreen.x - relMouse.x * lastMinimizedSize.x, startMouseScreen.y - relMouse.y * lastMinimizedSize.y);
+		}
+		dragging = true;
+	}, LEFT);
+	upperBar->AddEvent(MOUSE_HOLD_END, [](Instance* t) { dragging = false; }, LEFT);
+	upperBar->AddEvent(TICK, [](Instance* t) {
+		double tickCooldown = 1.0 / GetMonitorRefreshRate(GetCurrentMonitor());
+		static double currentCooldown = 0;
+		currentCooldown += dt;
+		if (tapped) cooldown += dt;
+
+		static bool pressed = false;
+		static bool released = false;
+		if (IsMouseButtonPressed(MOUSE_LEFT_BUTTON)) pressed = true;
+		if (IsMouseButtonReleased(MOUSE_LEFT_BUTTON)) released = true;
+
+		if (released and not IsWindowMaximized()) {
+			dragging = false;
+		}
+
+		if (currentCooldown < tickCooldown) return;
+
+		currentCooldown = 0;
+
+		if (IsWindowMaximized()) {
+			if (Resizing_EW)
+				SetMouseCursor(MOUSE_CURSOR_RESIZE_EW);
+			else
+				SetMouseCursor(MOUSE_CURSOR_DEFAULT);
+			return;
+		}
+
+		if (dragging) {
+			Vector2 m = GetMouseScreenPosition();
+			Vector2 delta = { m.x - startMouseScreen.x, m.y - startMouseScreen.y };
+
+			SUI_SetWindowPosition((int)roundf(startWinPos.x + delta.x), (int)roundf(startWinPos.y + delta.y));
+		} else {
+			static bool resizing = false;
+			static int resizeMask = 0;
+			static Vector2 startMouseScreen = { 0,0 };
+			static Vector2 startWinPos = { 0,0 };
+			static int startW = 0, startH = 0;
+
+			const int border = 6;
+
+			Vector2 mouse = GetMousePosition();
+			int w = winWidth;
+			int h = winHeight;
+
+			bool left = mouse.x <= border;
+			bool right = mouse.x >= w - border;
+			bool top = mouse.y <= 2;
+			bool bottom = mouse.y >= h - border;
+
+			if ((left and top) or (right and bottom))
+				SetMouseCursor(MOUSE_CURSOR_RESIZE_NWSE);
+			else if ((right and top) or (left and bottom))
+				SetMouseCursor(MOUSE_CURSOR_RESIZE_NESW);
+			else if (left or right)
+				SetMouseCursor(MOUSE_CURSOR_RESIZE_EW);
+			else if (top or bottom)
+				SetMouseCursor(MOUSE_CURSOR_RESIZE_NS);
+			else if (Resizing_EW)
+				SetMouseCursor(MOUSE_CURSOR_RESIZE_EW);
+			else
+				SetMouseCursor(MOUSE_CURSOR_DEFAULT);
+
+			if (!resizing and pressed and (left or right or top or bottom)) {
+				resizing = true;
+
+				resizeMask = 0;
+				if (left) resizeMask |= 1;
+				if (right) resizeMask |= 2;
+				if (top) resizeMask |= 4;
+				if (bottom) resizeMask |= 8;
+
+				Vector2 winPos = GetWindowPosition();
+				Vector2 mouseInWin = GetMousePosition();
+				startMouseScreen = { winPos.x + mouseInWin.x, winPos.y + mouseInWin.y };
+
+				startWinPos = winPos;
+				startW = w;
+				startH = h;
+			}
+
+			if (resizing and released) {
+				resizing = false;
+				resizeMask = 0;
+			}
+
+			if (resizing) {
+				Vector2 winPosNow = GetWindowPosition();
+				Vector2 mouseInWinNow = GetMousePosition();
+				Vector2 mouseScreen = { winPosNow.x + mouseInWinNow.x, winPosNow.y + mouseInWinNow.y };
+
+				float dx = mouseScreen.x - startMouseScreen.x;
+				float dy = mouseScreen.y - startMouseScreen.y;
+
+				int newW = startW;
+				int newH = startH;
+
+				float newX = startWinPos.x;
+				float newY = startWinPos.y;
+
+				if (resizeMask & 2) {
+					newW = (int)lroundf((float)startW + dx);
+				}
+				if (resizeMask & 1) {
+					newW = (int)lroundf((float)startW - dx);
+					newX = startWinPos.x + dx;
+				}
+				if (resizeMask & 8) {
+					newH = (int)lroundf((float)startH + dy);
+				}
+				if (resizeMask & 4) {
+					newH = (int)lroundf((float)startH - dy);
+					newY = startWinPos.y + dy;
+				}
+				if (newW < minW) {
+					if (resizeMask & 1) newX -= (minW - newW);
+					newW = minW;
+				}
+				if (newH < minH) {
+					if (resizeMask & 4) newY -= (minH - newH);
+					newH = minH;
+				}
+
+				SUI_SetWindowPosition((int)lroundf(newX), (int)lroundf(newY));
+				SUI_SetWindowSize(newW, newH);
+			}
+		}
+
+		if (Beamed_Cursor) {
+			SetMouseCursor(MOUSE_CURSOR_IBEAM);
+		}
+
+		if (pressed) pressed = false;
+		if (released) released = false;
+	});
+
+	ImageLabel* icon = new ImageLabel(upperBar);
+	icon->ZIndex = 2;
+	icon->BackgroundTransparency = 1;
+	icon->setImage("app_icon");
+	icon->Overlay = FIT;
+	icon->Position = { 0,0 };
+	icon->Size = { 0, 1 };
+	icon->SizeOFFSET.x = 50;
+
+#ifdef _SHOW_NEXORA
+	TextLabel* name = new TextLabel(upperBar);
+	name->Position = { 0, 0 };
+	name->PositionOFFSET.x = 60;
+	name->Size = { 0, 1 };
+	name->SizeOFFSET.x = 200;
+	name->Text = "Nexora";
+	name->TextAnchor = TextAnchorEnum::W;
+	name->FontFace = "SegoeB";
+	name->BackgroundTransparency = 1;
+	name->TextColor = DEFAULT_TEXT;
+#endif
+
+	ImageLabel* Exit = new ImageLabel(upperBar);
+	Exit->Position = { 1, 0.6 };
+	Exit->AnchorPosition = { 0,0.5 };
+	Exit->Size = { 0, 0.5 };
+	Exit->SizeOFFSET.x = BAR_BUTTONS_SIZE;
+	Exit->PositionOFFSET.x = -BAR_BUTTONS_SIZE;
+	Exit->BackgroundTransparency = 1;
+	Exit->Overlay = FIT;
+	Exit->setImage("exit");
+	Exit->ImageColor = { 255,100,100,255 };
+	Object2D* ExitButton = new Object2D(upperBar);
+	ExitButton->ZIndex = 3;
+	ExitButton->Position = { 1, 0.6 };
+	ExitButton->AnchorPosition = { 0,0.5 };
+	ExitButton->Size = { 0, 1 };
+	ExitButton->SizeOFFSET.x = BAR_BUTTONS_SIZE;
+	ExitButton->PositionOFFSET.x = -BAR_BUTTONS_SIZE;
+	ExitButton->BackgroundTransparency = 1;
+	ExitButton->BackgroundColor = { 255,255,255,255 };
+	ExitButton->Active = true;
+	ExitButton->AddEvent(MOUSE_ENTER, [ExitButton](Instance* t) { ExitButton->BackgroundTransparency = 0.8; });
+	ExitButton->AddEvent(MOUSE_LEAVE, [ExitButton](Instance* t) { ExitButton->BackgroundTransparency = 1; });
+	ExitButton->AddEvent(MOUSE_HOLD_END, [](Instance* t) {
+		programRunning = false;
+	}, LEFT);
+
+	ImageLabel* Window = new ImageLabel(upperBar);
+	Window->Position = { 1, 0.6 };
+	Window->AnchorPosition = { 0,0.5 };
+	Window->Size = { 0, 0.5 };
+	Window->SizeOFFSET.x = BAR_BUTTONS_SIZE;
+	Window->PositionOFFSET.x = -BAR_BUTTONS_SIZE * 2 - 1;
+	Window->BackgroundTransparency = 1;
+	Window->Overlay = FIT;
+	Window->setImage("window");
+	Window->ImageColor = { 255,255,255,255 };
+	Object2D* WindowButton = new Object2D(upperBar);
+	WindowButton->ZIndex = 3;
+	WindowButton->Position = { 1, 0.6 };
+	WindowButton->AnchorPosition = { 0,0.5 };
+	WindowButton->Size = { 0, 1 };
+	WindowButton->SizeOFFSET.x = BAR_BUTTONS_SIZE;
+	WindowButton->PositionOFFSET.x = -BAR_BUTTONS_SIZE * 2 - 1;
+	WindowButton->BackgroundTransparency = 1;
+	WindowButton->BackgroundColor = { 255,255,255,255 };
+	WindowButton->Active = true;
+	WindowButton->AddEvent(MOUSE_ENTER, [WindowButton](Instance* t) { WindowButton->BackgroundTransparency = 0.8; });
+	WindowButton->AddEvent(MOUSE_LEAVE, [WindowButton](Instance* t) { WindowButton->BackgroundTransparency = 1; });
+	WindowButton->AddEvent(MOUSE_HOLD_END, [](Instance* t) {
+		if (IsWindowMaximized())
+			RestoreWindow();
+		else
+			MaximizeWindow();
+	}, LEFT);
+
+	ImageLabel* Hide = new ImageLabel(upperBar);
+	Hide->Position = { 1, 0.5 };
+	Hide->AnchorPosition = { 0,0.5 };
+	Hide->Size = { 0, 0.6 };
+	Hide->SizeOFFSET.x = BAR_BUTTONS_SIZE;
+	Hide->PositionOFFSET.x = -BAR_BUTTONS_SIZE * 3 - 2;
+	Hide->BackgroundTransparency = 1;
+	Hide->Overlay = FIT;
+	Hide->setImage("hide");
+	Hide->ImageColor = { 255,255,255,255 };
+	Object2D* HideButton = new Object2D(upperBar);
+	HideButton->ZIndex = 3;
+	HideButton->Position = { 1, 0.6 };
+	HideButton->AnchorPosition = { 0,0.5 };
+	HideButton->Size = { 0, 1 };
+	HideButton->SizeOFFSET.x = BAR_BUTTONS_SIZE;
+	HideButton->PositionOFFSET.x = -BAR_BUTTONS_SIZE * 3 - 2;
+	HideButton->BackgroundTransparency = 1;
+	HideButton->BackgroundColor = { 255,255,255,255 };
+	HideButton->Active = true;
+	HideButton->AddEvent(MOUSE_ENTER, [HideButton](Instance* t) { HideButton->BackgroundTransparency = 0.8; });
+	HideButton->AddEvent(MOUSE_LEAVE, [HideButton](Instance* t) { HideButton->BackgroundTransparency = 1; });
+	HideButton->AddEvent(MOUSE_HOLD_END, [](Instance* t) {
+		MinimizeWindow();
+	}, LEFT);
+
+	return 0;
+}
+
+int initAuth() {
+	Object2D* AuthFrame = new Object2D(StartInstance);
+	AuthFrame->Name = "Auth Frame";
+	AuthFrame->PositionOFFSET = { 0, BAR_SIZE };
+	AuthFrame->Size = { 1, 1 };
+	AuthFrame->SizeOFFSET = { 0, -25 };
+	AuthFrame->BackgroundColor = mulColor(DEFAULT_BACKGROUND, 1.2);
+	AuthFrame->ZIndex = 15;
+
+	ImageLabel* AuthBackground = new ImageLabel(AuthFrame);
+	AuthBackground->Size = { 1.05,1.05 };
+	AuthBackground->AnchorPosition = { 0.5,0.5 };
+	AuthBackground->Position = { 0.5,0.5 };
+	AuthBackground->BackgroundTransparency = 1;
+	AuthBackground->ImageColor = DEFAULT_TEXT;
+	AuthBackground->Name = "AuthBackground";
+	AuthBackground->setImage("auth_background");
+	AuthBackground->ImageTransparency = 0.5;
+	AuthBackground->Overlay = CROP;
+	AuthBackground->AddEvent(TICK, [AuthBackground](Instance* t) {
+		static Vector2 lastMouse{};
+		Vector2 mousePos = GetMousePosition();
+
+		if (mousePos.x != lastMouse.x or mousePos.y != lastMouse.y) {
+			lastMouse = mousePos;
+			Vector2 mouseRelative = { mousePos.x / winWidth, mousePos.y / winHeight };
+			float x = 0.025f * mouseRelative.x;
+			float y = 0.025f * mouseRelative.y;
+			AuthBackground->Position.x = 0.5 - x;
+			AuthBackground->Position.y = 0.5 - y;
+		}
+	});
+
+	ScrollFrame* Scissors = new ScrollFrame(AuthFrame);
+	Scissors->BackgroundTransparency = 1;
+	Scissors->AnchorPosition = { 0.5,0.5 };
+	Scissors->Size = { 0, 0 };
+	Scissors->SizeOFFSET = { 540, 420 };
+	Scissors->Position = { 0.5, 0.585 };
+	Scissors->ScrollEnabled = false;
+	Scissors->SliderTransparency = 1;
+
+	Object2D* SignInFrame = new Object2D(Scissors);
+	SignInFrame->BackgroundColor = mulColor(DEFAULT_BACKGROUND, 0.8);
+	SignInFrame->BorderColor = mulColor(DEFAULT_BACKGROUND, 1.5);
+	SignInFrame->BorderThickness = 3;
+	SignInFrame->Roundness = 0.15;
+	SignInFrame->AnchorPosition = { 0.5,0.5 };
+	SignInFrame->Size = { 0.75, 0.9 };
+	SignInFrame->Position = { -0.4, 0.5 };
+	SignInFrame->Segments = 10;
+
+	Object2D* SignUpFrame = new Object2D(Scissors);
+	SignUpFrame->BackgroundColor = mulColor(DEFAULT_BACKGROUND, 0.8);
+	SignUpFrame->BorderColor = mulColor(DEFAULT_BACKGROUND, 1.5);
+	SignUpFrame->BorderThickness = 3;
+	SignUpFrame->Roundness = 0.15;
+	SignUpFrame->AnchorPosition = { 0.5,0.5 };
+	SignUpFrame->Size = { 0.75, 0.9 };
+	SignUpFrame->Position = { 0.5, 0.5 };
+	SignUpFrame->Segments = 10;
+
+	TextLabel* SignIn = new TextLabel(AuthFrame);
+	SignIn->Size = { 0, 0 };
+	SignIn->SizeOFFSET = { 135, 50 };
+	SignIn->Position = { 0.5, 0.585 };
+	SignIn->PositionOFFSET = { -80, -230 };
+	SignIn->AnchorPosition = { 0.5,0.5 };
+	SignIn->BackgroundColor = mulColor(DEFAULT_BACKGROUND, 1);
+	SignIn->BorderColor = mulColor(DEFAULT_BACKGROUND, 1.4);
+	SignIn->BorderThickness = 2;
+	SignIn->Text = " Sign in ";
+	SignIn->FontFace = "SegoeB";
+	SignIn->TextColor = mulColor(DEFAULT_TEXT, 0.6);
+	SignIn->Name = "SingIn";
+	SignIn->Roundness = 0.2;
+	SignIn->Active = true;
+	SignIn->AddEvent(MOUSE_ENTER, [SignIn](Instance* t) {
+		Animate::Create(&SignIn->SizeOFFSET, 0.125f, { 170, 65 });
+		Animate::Create(&SignIn->BorderColor, 0.15f, mulColor(DEFAULT_BACKGROUND, 1.6));
+		Animate::Create(&SignIn->BackgroundColor, 0.1f, mulColor(DEFAULT_BACKGROUND, 1.2));
+	});
+	SignIn->AddEvent(MOUSE_LEAVE, [SignIn](Instance* t) {
+		Animate::Create(&SignIn->SizeOFFSET, 0.125f, { 135, 50 });
+		Animate::Create(&SignIn->BorderColor, 0.15f, mulColor(DEFAULT_BACKGROUND, 1.4));
+		Animate::Create(&SignIn->BackgroundColor, 0.1f, mulColor(DEFAULT_BACKGROUND, 1));
+	});
+
+	TextLabel* SignUp = new TextLabel(AuthFrame);
+	SignUp->Size = { 0, 0 };
+	SignUp->SizeOFFSET = { 135, 50 };
+	SignUp->Position = { 0.5, 0.585 };
+	SignUp->PositionOFFSET = { 80, -250 };
+	SignUp->AnchorPosition = { 0.5,0.5 };
+	SignUp->BackgroundColor = mulColor(DEFAULT_BACKGROUND, 1);
+	SignUp->BorderColor = mulColor(DEFAULT_BACKGROUND, 1.4);
+	SignUp->BorderThickness = 2;
+	SignUp->Text = " Sign up ";
+	SignUp->FontFace = "SegoeB";
+	SignUp->TextColor = mulColor(DEFAULT_TEXT, 1);
+	SignUp->Name = "SignUp";
+	SignUp->Roundness = 0.2;
+	SignUp->Active = true;
+	SignUp->AddEvent(MOUSE_ENTER, [SignUp](Instance* t) {
+		Animate::Create(&SignUp->SizeOFFSET, 0.125f, { 170, 65 });
+		Animate::Create(&SignUp->BorderColor, 0.15f, mulColor(DEFAULT_BACKGROUND, 1.6));
+		Animate::Create(&SignUp->BackgroundColor, 0.1f, mulColor(DEFAULT_BACKGROUND, 1.2));
+	});
+	SignUp->AddEvent(MOUSE_LEAVE, [SignUp](Instance* t) {
+		Animate::Create(&SignUp->SizeOFFSET, 0.125f, { 135, 50 });
+		Animate::Create(&SignUp->BorderColor, 0.15f, mulColor(DEFAULT_BACKGROUND, 1.4));
+		Animate::Create(&SignUp->BackgroundColor, 0.1f, mulColor(DEFAULT_BACKGROUND, 1));
+	});
+
+	SignIn->AddEvent(MOUSE_CLICK, [SignIn, SignUp, SignInFrame, SignUpFrame](Instance* t) {
+		Animate::Create(&SignUp->TextColor, 0.125f, mulColor(DEFAULT_TEXT, 0.6));
+		Animate::Create(&SignIn->TextColor, 0.125f, mulColor(DEFAULT_TEXT, 1));
+
+		Animate::Create(&SignIn->PositionOFFSET.y, 0.125f, -250);
+		Animate::Create(&SignUp->PositionOFFSET.y, 0.125f, -230);
+
+		Animate::Create(&SignInFrame->Position.x, 0.2f, 0.5f, Animate::Circular, Animate::Out);
+		Animate::Create(&SignUpFrame->Position.x, 0.2f, 1.6f, Animate::Circular, Animate::Out);
+	}, LEFT);
+
+	SignUp->AddEvent(MOUSE_CLICK, [SignIn, SignUp, SignInFrame, SignUpFrame](Instance* t) {
+		Animate::Create(&SignIn->TextColor, 0.125f, mulColor(DEFAULT_TEXT, 0.6));
+		Animate::Create(&SignUp->TextColor, 0.125f, mulColor(DEFAULT_TEXT, 1));
+
+		Animate::Create(&SignIn->PositionOFFSET.y, 0.125f, -230);
+		Animate::Create(&SignUp->PositionOFFSET.y, 0.125f, -250);
+
+		Animate::Create(&SignInFrame->Position.x, 0.2f, -0.4f, Animate::Circular, Animate::Out);
+		Animate::Create(&SignUpFrame->Position.x, 0.2f, 0.5f, Animate::Circular, Animate::Out);
+	}, LEFT);
+
+	TextLabel* SignInInternal = new TextLabel(SignInFrame);
+	SignInInternal->Size = { 0.5, 0.12 };
+	SignInInternal->Position = { 0.5, 0 };
+	SignInInternal->AnchorPosition = { 0.5,0 };
+	SignInInternal->BackgroundTransparency = 1;
+	SignInInternal->Text = "Sign in";
+	SignInInternal->FontFace = "SegoeB";
+	SignInInternal->TextColor = mulColor(DEFAULT_TEXT, 1);
+	SignInInternal->Name = "SingIn";
+
+	TextBox* Login = new TextBox(SignInFrame);
+	Login->Size = { 0.9, 0.1 };
+	Login->Position = { 0.5, 0.3 };
+	Login->AnchorPosition = { 0.5,0.5 };
+	Login->BackgroundColor = mulColor(DEFAULT_BACKGROUND, 1.7);
+	Login->TextSize = -1;
+	Login->maxSymbols = 20;
+	Login->PlaceholderText = "Account login";
+	Login->TextAnchor = TextAnchorEnum::W;
+	Login->FontFace = "SegoeB";
+	Login->TextColor = DEFAULT_TEXT;
+	Login->CursorColor = mulColor(DEFAULT_TEXT, 0.7);
+	Login->Spacing = 0;
+	Login->BorderColor = mulColor(DEFAULT_BACKGROUND, 0.5);
+	Login->BorderThickness = 4;
+	Login->ClearOnClick = false;
+	Login->CursorSize = 2;
+	Login->AllowedSymbols = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz1234567890_";
+
+	TextBox* Password = new TextBox(SignInFrame);
+	Password->Size = { 0.8, 0.1 };
+	Password->Position = { 0.45, 0.44 };
+	Password->AnchorPosition = { 0.5,0.5 };
+	Password->BackgroundColor = mulColor(DEFAULT_BACKGROUND, 1.7);
+	Password->TextSize = -1;
+	Password->maxSymbols = 20;
+	Password->PlaceholderText = "Account password";
+	Password->TextAnchor = TextAnchorEnum::W;
+	Password->FontFace = "SegoeB";
+	Password->TextColor = DEFAULT_TEXT;
+	Password->CursorColor = mulColor(DEFAULT_TEXT, 0.7);
+	Password->Spacing = 0;
+	Password->BorderColor = mulColor(DEFAULT_BACKGROUND, 0.5);
+	Password->BorderThickness = 4;
+	Password->HideText = '*';
+	Password->ClearOnClick = false;
+	Password->CursorSize = 2;
+	Password->AllowedSymbols = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz1234567890_!+-=#$%^&*().,/\\`~[]{}";
+
+	ImageLabel* TextBoxEye = new ImageLabel(SignInFrame);
+	TextBoxEye->setImage("textbox_eye");
+	TextBoxEye->Size = { 0.085, 0.085 };
+	TextBoxEye->Position = { 0.915, 0.44 };
+	TextBoxEye->Active = true;
+	TextBoxEye->AnchorPosition = { 0.5,0.5 };
+	TextBoxEye->BackgroundTransparency = 1;
+	TextBoxEye->ImageColor = DEFAULT_TEXT;
+	TextBoxEye->AddEvent(MOUSE_HOLD_END, [Password, TextBoxEye](Instance* t) {
+		Password->HideText = (Password->HideText == '\0' ? '*' : '\0');
+		TextBoxEye->ImageColor = mulColor(DEFAULT_TEXT, (Password->HideText != '\0') ? 1 : 0.8);
+	}, LEFT);
+	TextBoxEye->AddEvent(MOUSE_ENTER, [TextBoxEye](Instance* t) {
+		Animate::Create(&TextBoxEye->Size, 0.125, { 0.105, 0.105 });
+	});
+	TextBoxEye->AddEvent(MOUSE_LEAVE, [TextBoxEye](Instance* t) {
+		Animate::Create(&TextBoxEye->Size, 0.125, { 0.085, 0.085 });
+	});
+
+	TextLabel* DataIncorrect = new TextLabel(SignInFrame);
+	DataIncorrect->Size = { 0.9, 0.06 };
+	DataIncorrect->Position = { 0.5, 0.55 };
+	DataIncorrect->AnchorPosition = { 0.5,0.5 };
+	DataIncorrect->Text = "Login Incorrect";
+	DataIncorrect->TextColor = { 255, 40, 40, 255 };
+	DataIncorrect->FontFace = "SegoeB";
+	DataIncorrect->BackgroundTransparency = 1;
+	DataIncorrect->TextTransparency = 1;
+
+	TextLabel* CheckLogin = new TextLabel(SignInFrame);
+	CheckLogin->Position = { 0.5, 0.65 };
+	CheckLogin->Size = { 0.4, 0.125 };
+	CheckLogin->AnchorPosition = { 0.5, 0.5 };
+	CheckLogin->BackgroundColor = mulColor(DEFAULT_BACKGROUND, 1.5);
+	CheckLogin->BorderColor = mulColor(DEFAULT_BACKGROUND, 0.5);
+	CheckLogin->BorderThickness = 4;
+	CheckLogin->FontFace = "SegoeB";
+	CheckLogin->Active = true;
+	CheckLogin->Text = "Log in";
+	CheckLogin->Roundness = 0.15;
+	CheckLogin->Segments = 7;
+	CheckLogin->TextColor = mulColor(DEFAULT_TEXT, 0.8);
+	CheckLogin->AddEvent(MOUSE_ENTER, [CheckLogin](Instance* t) {
+		Animate::Create(&CheckLogin->Size, 0.1f, { 0.5, 0.135 });
+		Animate::Create(&CheckLogin->BorderColor, 0.1f, mulColor(DEFAULT_BACKGROUND, 0.8));
+		Animate::Create(&CheckLogin->TextColor, 0.1f, mulColor(DEFAULT_TEXT, 1.1));
+	});
+	CheckLogin->AddEvent(MOUSE_LEAVE, [CheckLogin](Instance* t) {
+		Animate::Create(&CheckLogin->Size, 0.1f, { 0.4, 0.125 });
+		Animate::Create(&CheckLogin->BorderColor, 0.1f, mulColor(DEFAULT_BACKGROUND, 0.5));
+		Animate::Create(&CheckLogin->TextColor, 0.1f, mulColor(DEFAULT_TEXT, 0.8));
+	});
+	CheckLogin->AddEvent(MOUSE_HOLD_END, [DataIncorrect, CheckLogin, Login, Password](Instance* t) {
+		if (Authenticated) return;
+		if (Login->GetText().empty() or Password->GetText().empty()) return;
+
+		DataIncorrect->TextTransparency = 1;
+
+		size_t size = Login->GetText().size() + Password->GetText().size() + 1;
+
+		char* input = new char[size];
+		memcpy(input, Login->GetText().c_str(), Login->GetText().size());
+		input[Login->GetText().size()] = '|';
+		memcpy(input + Login->GetText().size() + 1, Password->GetText().c_str(), Password->GetText().size());
+
+		AsyncData* data = new AsyncData(input, QueryType::SignIn, size);
+		data->Completed([DataIncorrect, Login, Password, CheckLogin, data, input](std::pair<const char*, size_t> output) {
+			CheckLogin->Active = true;
+			CheckLogin->TextColor = mulColor(DEFAULT_TEXT, 0.8);
+			Login->Active = true;
+			Login->TextColor = mulColor(DEFAULT_TEXT, 1);
+			Password->Active = true;
+			Password->TextColor = mulColor(DEFAULT_TEXT, 1);
+
+			delete[]input;
+
+			if (output.first) {
+				if (!strcmp(output.first, "-1")) {
+					std::cout << "Header is incorrect" << std::endl;
+					return;
+				}
+
+				if (!strcmp(output.first, "e1")) {
+					DataIncorrect->Text = "Data is incorrect";
+					DataIncorrect->TextTransparency = 0;
+				}
+				else if (!strcmp(output.first, "e2")) {
+					DataIncorrect->Text = "Login is incorrect";
+					DataIncorrect->TextTransparency = 0;
+				}
+				else if (!strcmp(output.first, "e3")) {
+					DataIncorrect->Text = "Password is incorrect";
+					DataIncorrect->TextTransparency = 0;
+				}
+				else {
+					unsigned long id = 0;
+					for (int i = 0; i < output.second; i++) {
+						if (output.first[i] == '\0') break;
+						id *= 10;
+						id += output.first[i] - '0';
+					}
+					clientId = id;
+					Authenticated = true;
+					loadChats(0, []() {
+						ChatsUpdated = true;
+					});
+					DataIncorrect->TextTransparency = 1;
+
+					UPDATE_USER_DATA();
+				}
+				delete[]output.first;
+			}
+			else {
+				DataIncorrect->Text = "Server doesn't answer";
+				DataIncorrect->TextTransparency = 0;
+			}
+		});
+		data->Sended([Login, Password, CheckLogin, DataIncorrect]() {
+			DataIncorrect->TextTransparency = 1;
+			CheckLogin->Active = false;
+			Login->Active = false;
+			Password->Active = false;
+			});
+		data->send();
+	}, LEFT);
+
+	/*************
+	*   Sign Up  *
+	*************/
+
+	TextLabel* SignUpInternal = new TextLabel(SignUpFrame);
+	SignUpInternal->Size = { 0.5, 0.12 };
+	SignUpInternal->Position = { 0.5, 0 };
+	SignUpInternal->AnchorPosition = { 0.5,0 };
+	SignUpInternal->BackgroundTransparency = 1;
+	SignUpInternal->Text = "Sign up";
+	SignUpInternal->FontFace = "SegoeB";
+	SignUpInternal->TextColor = mulColor(DEFAULT_TEXT, 1);
+	SignUpInternal->Name = "SingIn";
+
+	TextBox* Login2 = new TextBox(SignUpFrame);
+	Login2->Size = { 0.9, 0.1 };
+	Login2->Position = { 0.5, 0.3 };
+	Login2->AnchorPosition = { 0.5,0.5 };
+	Login2->BackgroundColor = mulColor(DEFAULT_BACKGROUND, 1.7);
+	Login2->TextSize = -1;
+	Login2->maxSymbols = 20;
+	Login2->PlaceholderText = "New account login";
+	Login2->TextAnchor = TextAnchorEnum::W;
+	Login2->FontFace = "SegoeB";
+	Login2->TextColor = DEFAULT_TEXT;
+	Login2->CursorColor = mulColor(DEFAULT_TEXT, 0.7);
+	Login2->Spacing = 0;
+	Login2->BorderColor = mulColor(DEFAULT_BACKGROUND, 0.5);
+	Login2->BorderThickness = 4;
+	Login2->ClearOnClick = false;
+	Login2->CursorSize = 2;
+	Login2->AllowedSymbols = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz1234567890_";
+
+	TextBox* Password2 = new TextBox(SignUpFrame);
+	Password2->Size = { 0.8, 0.1 };
+	Password2->Position = { 0.45, 0.44 };
+	Password2->AnchorPosition = { 0.5,0.5 };
+	Password2->BackgroundColor = mulColor(DEFAULT_BACKGROUND, 1.7);
+	Password2->TextSize = -1;
+	Password2->maxSymbols = 20;
+	Password2->PlaceholderText = "Password";
+	Password2->TextAnchor = TextAnchorEnum::W;
+	Password2->FontFace = "SegoeB";
+	Password2->TextColor = DEFAULT_TEXT;
+	Password2->CursorColor = mulColor(DEFAULT_TEXT, 0.7);
+	Password2->Spacing = 0;
+	Password2->BorderColor = mulColor(DEFAULT_BACKGROUND, 0.5);
+	Password2->BorderThickness = 4;
+	Password2->HideText = '*';
+	Password2->ClearOnClick = false;
+	Password2->CursorSize = 2;
+	Password2->AllowedSymbols = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz1234567890_!+-=#$%^&*().,/\\`~[]{}";
+	TextBox* Password22 = new TextBox(SignUpFrame);
+	Password22->Size = { 0.8, 0.1 };
+	Password22->Position = { 0.45, 0.57 };
+	Password22->AnchorPosition = { 0.5,0.5 };
+	Password22->BackgroundColor = mulColor(DEFAULT_BACKGROUND, 1.7);
+	Password22->TextSize = -1;
+	Password22->maxSymbols = 20;
+
+	Password22->PlaceholderText = "Confirm password";
+	Password22->TextAnchor = TextAnchorEnum::W;
+	Password22->FontFace = "SegoeB";
+	Password22->TextColor = DEFAULT_TEXT;
+	Password22->CursorColor = mulColor(DEFAULT_TEXT, 0.7);
+	Password22->Spacing = 0;
+	Password22->BorderColor = mulColor(DEFAULT_BACKGROUND, 0.5);
+	Password22->BorderThickness = 4;
+	Password22->HideText = '*';
+	Password22->ClearOnClick = false;
+	Password22->CursorSize = 2;
+	Password22->AllowedSymbols = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz1234567890_!+-=#$%^&*().,/\\`~[]{}";
+
+	ImageLabel* TextBoxEye2 = new ImageLabel(SignUpFrame);
+	TextBoxEye2->setImage("textbox_eye");
+	TextBoxEye2->Size = { 0.085, 0.085 };
+	TextBoxEye2->Position = { 0.915, 0.505 };
+	TextBoxEye2->Active = true;
+	TextBoxEye2->AnchorPosition = { 0.5,0.5 };
+	TextBoxEye2->BackgroundTransparency = 1;
+	TextBoxEye2->ImageColor = DEFAULT_TEXT;
+	TextBoxEye2->AddEvent(MOUSE_HOLD_END, [Password2, Password22, TextBoxEye2](Instance* t) {
+		Password2->HideText = (Password2->HideText == '\0' ? '*' : '\0');
+		Password22->HideText = (Password22->HideText == '\0' ? '*' : '\0');
+		TextBoxEye2->ImageColor = mulColor(DEFAULT_TEXT, (Password2->HideText != '\0') ? 1 : 0.8);
+	}, LEFT);
+	TextBoxEye2->AddEvent(MOUSE_ENTER, [TextBoxEye2](Instance* t) {
+		Animate::Create(&TextBoxEye2->Size, 0.125, { 0.105, 0.105 });
+	});
+	TextBoxEye2->AddEvent(MOUSE_LEAVE, [TextBoxEye2](Instance* t) {
+		Animate::Create(&TextBoxEye2->Size, 0.125, { 0.085, 0.085 });
+	});
+
+	TextLabel* DataIncorrect2 = new TextLabel(SignUpFrame);
+	DataIncorrect2->Size = { 0.9, 0.06 };
+	DataIncorrect2->Position = { 0.5, 0.67 };
+	DataIncorrect2->AnchorPosition = { 0.5,0.5 };
+	DataIncorrect2->Text = "Login already exists";
+	DataIncorrect2->TextColor = { 255, 40, 40, 255 };
+	DataIncorrect2->FontFace = "SegoeB";
+	DataIncorrect2->BackgroundTransparency = 1;
+	DataIncorrect2->TextTransparency = 1;
+
+	TextLabel* CheckLogin2 = new TextLabel(SignUpFrame);
+	CheckLogin2->Position = { 0.5, 0.8 };
+	CheckLogin2->Size = { 0.4, 0.125 };
+	CheckLogin2->AnchorPosition = { 0.5, 0.5 };
+	CheckLogin2->BackgroundColor = mulColor(DEFAULT_BACKGROUND, 1.5);
+	CheckLogin2->BorderColor = mulColor(DEFAULT_BACKGROUND, 0.5);
+	CheckLogin2->BorderThickness = 4;
+	CheckLogin2->FontFace = "SegoeB";
+	CheckLogin2->Active = true;
+	CheckLogin2->Text = "Create";
+	CheckLogin2->Roundness = 0.15;
+	CheckLogin2->Segments = 7;
+	CheckLogin2->TextColor = mulColor(DEFAULT_TEXT, 0.8);
+	CheckLogin2->AddEvent(MOUSE_ENTER, [CheckLogin2](Instance* t) {
+		Animate::Create(&CheckLogin2->Size, 0.1f, { 0.5, 0.135 });
+		Animate::Create(&CheckLogin2->BorderColor, 0.1f, mulColor(DEFAULT_BACKGROUND, 0.8));
+		Animate::Create(&CheckLogin2->TextColor, 0.1f, mulColor(DEFAULT_TEXT, 1.1));
+	});
+	CheckLogin2->AddEvent(MOUSE_LEAVE, [CheckLogin2](Instance* t) {
+		Animate::Create(&CheckLogin2->Size, 0.1f, { 0.4, 0.125 });
+		Animate::Create(&CheckLogin2->BorderColor, 0.1f, mulColor(DEFAULT_BACKGROUND, 0.5));
+		Animate::Create(&CheckLogin2->TextColor, 0.1f, mulColor(DEFAULT_TEXT, 0.8));
+	});
+	CheckLogin2->AddEvent(MOUSE_HOLD_END, [DataIncorrect2, CheckLogin2, Login2, Password2, Password22](Instance* t) {
+		if (Authenticated) return;
+		if (Login2->GetText().empty() or Password2->GetText().empty() or Password22->GetText().empty()) return;
+		if (strcmp(Password2->GetText().c_str(), Password22->GetText().c_str())) {
+			DataIncorrect2->Text = "Passwords must match";
+			DataIncorrect2->TextTransparency = 0;
+			return;
+		}
+
+		DataIncorrect2->TextTransparency = 1;
+
+		size_t size = Login2->GetText().size() + Password2->GetText().size() + 1;
+
+		char* input = new char[size];
+		memcpy(input, Login2->GetText().c_str(), Login2->GetText().size());
+		input[Login2->GetText().size()] = '|';
+		memcpy(input + Login2->GetText().size() + 1, Password2->GetText().c_str(), Password2->GetText().size());
+
+		AsyncData* data = new AsyncData(input, QueryType::SignUp, size);
+		data->Completed([DataIncorrect2, Login2, Password2, Password22, CheckLogin2, data, input](std::pair<const char*, size_t> output) {
+			CheckLogin2->Active = true;
+			CheckLogin2->TextColor = mulColor(DEFAULT_TEXT, 0.8);
+			Login2->Active = true;
+			Login2->TextColor = mulColor(DEFAULT_TEXT, 1);
+			Password2->Active = true;
+			Password2->TextColor = mulColor(DEFAULT_TEXT, 1);
+			Password22->Active = true;
+			Password22->TextColor = mulColor(DEFAULT_TEXT, 1);
+			delete[]input;
+
+			if (output.first) {
+				if (!strcmp(output.first, "-1")) {
+					std::cout << "Header is incorrect" << std::endl;
+					return;
+				}
+
+				if (!strcmp(output.first, "e1")) {
+					DataIncorrect2->Text = "Data is incorrect";
+					DataIncorrect2->TextTransparency = 0;
+				}
+				else if (!strcmp(output.first, "e2")) {
+					DataIncorrect2->Text = "Login is incorrect";
+					DataIncorrect2->TextTransparency = 0;
+				}
+				else if (!strcmp(output.first, "e3")) {
+					DataIncorrect2->Text = "Password is incorrect";
+					DataIncorrect2->TextTransparency = 0;
+				}
+				else {
+					size_t id = string_to_size_t(output.first);
+					clientId = id;
+					Authenticated = true;
+					loadChats(0, []() {
+						ChatsUpdated = true;
+						});
+					DataIncorrect2->TextTransparency = 1;
+
+					UPDATE_USER_DATA();
+				}
+				delete[]output.first;
+			}
+			else {
+				DataIncorrect2->Text = "Server doesn't answer";
+				DataIncorrect2->TextTransparency = 0;
+			}
+		});
+		data->Sended([Login2, Password2, Password22, CheckLogin2, DataIncorrect2]() {
+			DataIncorrect2->TextTransparency = 1;
+			CheckLogin2->Active = false;
+			Login2->Active = false;
+			Password2->Active = false;
+			Password22->Active = false;
+			});
+		data->send();
+	}, LEFT);
+
+	return 0;
+}
+
+ScrollFrame* settingsAnimationScroll = nullptr;
+Object2D* profileFrame = nullptr;
+
+int profileUI() {
+	if (profileFrame) {
+		return 1;
+	}
+
+	profileFrame = new ScrollFrame(StartInstance->findChild("GeneralUI background"));
+	profileFrame->SizeOFFSET.x = 0; // 400
+	profileFrame->SizeOFFSET.y = 0; // 450
+	profileFrame->BackgroundColor = mulColor(DEFAULT_BACKGROUND, 1.2);
+	profileFrame->Roundness = 0.1;
+	profileFrame->BorderColor = DEFAULT_BACKGROUND;
+	profileFrame->BorderThickness = 4;
+	profileFrame->ZIndex = 15;
+	profileFrame->AnchorPosition = { 0.5,0.5 };
+	profileFrame->Position = { 0.5,0.5 };
+	profileFrame->Active = true;
+	profileFrame->Name = "profileFrame";
+
+	ImageLabel* ProfileImage = new ImageLabel(profileFrame);
+	ProfileImage->SizeOFFSET = { 70, 70 };
+	ProfileImage->PositionOFFSET = { 15,15 };
+	ProfileImage->BackgroundTransparency = 1;
+	ProfileImage->setImage("profile");
+	ProfileImage->ImageColor = DEFAULT_TEXT;
+	ProfileImage->Roundness = 1;
+	ProfileImage->RoundImage = true;
+	ProfileImage->BorderColor = mulColor(DEFAULT_BACKGROUND, 1);
+	ProfileImage->BorderThickness = 3;
+	ProfileImage->Name = "ProfileImage";
+	ProfileImage->Overlay = CROP;
+
+	Object2D* changeImage = new Object2D(ProfileImage);
+	changeImage->Size = { 1.01,1.01 };
+	changeImage->AnchorPosition = { 0.5,0.5 };
+	changeImage->Position = { 0.5,0.5 };
+	changeImage->Roundness = 1;
+	changeImage->BackgroundTransparency = 1;
+	changeImage->BorderColor = mulColor(DEFAULT_BACKGROUND, 1);
+	changeImage->BorderThickness = 3;
+	changeImage->Active = true;
+
+	ImageLabel* changeImageImg = new ImageLabel(changeImage);
+	changeImageImg->Size = { 0.5,0.5 };
+	changeImageImg->AnchorPosition = { 0.5,0.5 };
+	changeImageImg->Position = { 0.5,0.5 };
+	changeImageImg->BackgroundTransparency = 1;
+	changeImageImg->setImage("change_pencil");
+	changeImageImg->ImageTransparency = 1;
+
+	changeImage->AddEvent(MOUSE_ENTER, [changeImage, changeImageImg](Instance* t) {
+		Animate::Create(&changeImage->BackgroundTransparency, 0.1, 0.5);
+		Animate::Create(&changeImageImg->ImageTransparency, 0.1, 0);
+	});
+
+	changeImage->AddEvent(MOUSE_LEAVE, [changeImage, changeImageImg](Instance* t) {
+		Animate::Create(&changeImage->BackgroundTransparency, 0.1, 1);
+		Animate::Create(&changeImageImg->ImageTransparency, 0.1, 1);
+	});
+
+	static bool o = false;
+	static std::mutex o_m;
+
+	changeImage->AddEvent(MOUSE_HOLD_END, [](Instance* t) {
+		if (o) return;
+		std::thread thr([]() {
+			
+			o_m.lock();
+			o = true;
+			o_m.unlock();
+
+			#ifdef _WIN32
+			std::string path = WstringToString(GetFile());
+			#elif __linux__
+			std::string path = GetFile();
+			#endif
+
+			o_m.lock();
+			o = false;
+			o_m.unlock();
+
+			if (path.empty()) {
+				return;
+			}
+			
+			try {
+				std::filesystem::path file = path;
+				if (file.extension() != ".png" and
+					file.extension() != ".jpg" and
+					file.extension() != ".jpeg") {
+						SendInfoMessage("File choice", "Incorrect file type", WARN);
+						return;
+				}
+
+				size_t size = 0;
+				char* input = nullptr;
+
+				if (file.extension() == ".png") {
+					const std::vector<unsigned char>& bytes = PngBytesToJpgBytes(path);
+					size = bytes.size();
+					input = new char[size];
+					memcpy(input, bytes.data(), size);
+				} else {
+					std::ifstream data_file(path, std::ios::binary);
+					if (!data_file) return;
+					size = std::filesystem::file_size(file);
+					input = new char[size];
+					data_file.read(input, size);
+				}
+				
+				if (size > 3_mb) {
+					SendInfoMessage("File size", "Avatar size must be < 10mb", WARN);
+					return;
+				}
+
+				auto data = new AsyncData(input, UPDATE_AVATAR, size);
+				data->Completed([input](std::pair<const char*, size_t> output){
+					delete[] input;
+					if (!output.first) {
+						SendInfoMessage("Change avatar", "Output is nullptr", ERROR);
+						return;
+					}
+
+					if (!strcmp(output.first, "e1")) {
+						SendInfoMessage("Change avatar", "Avatar is incorrect", WARN);
+						return;
+					}
+
+					delete[] output.first;
+					UPDATE_USER_DATA();
+				});
+
+				data->send();
+
+			} catch (const char* ex) {
+				std::cout << ex << std::endl;
+				std::cout << "MEMORY LEAK + EXCEPTION (" << __LINE__ << " | " << ex << ")" << std::endl;
+			}
+		});
+
+		thr.detach();
+	}, LEFT);
+
+	ImageLabel* ConfirmName = new ImageLabel(profileFrame);
+	ConfirmName->PositionOFFSET = { 375, 37.5 };
+	ConfirmName->SizeOFFSET = { 25, 25 };
+	ConfirmName->AnchorPosition = { 0.5, 0.5 };
+	ConfirmName->BackgroundTransparency = 1;
+	ConfirmName->ImageColor = { 130, 200, 80, 255 };
+	ConfirmName->setImage("checked");
+	ConfirmName->Active = false;
+	ConfirmName->Visible = false;
+	ConfirmName->Origin = { 12.5, 12.5 };
+	ConfirmName->AddEvent(MOUSE_ENTER, [ConfirmName](Instance* t) {
+		Animate::Create(&ConfirmName->Rotation, 0.125, 20);
+		Animate::Create(&ConfirmName->ImageColor, 0.125, DEFAULT_TEXT);
+		Animate::Create(&ConfirmName->SizeOFFSET, 0.125, { 35, 35 });
+		Animate::Create(&ConfirmName->Origin, 0.125, { 17.5, 17.5 });
+	});
+	ConfirmName->AddEvent(MOUSE_LEAVE, [ConfirmName](Instance* t) {
+		Animate::Create(&ConfirmName->Rotation, 0.125, 0);
+		Animate::Create(&ConfirmName->ImageColor, 0.125, { 130, 200, 80, 255 });
+		Animate::Create(&ConfirmName->SizeOFFSET, 0.125, { 25, 25 });
+		Animate::Create(&ConfirmName->Origin, 0.125, { 12.5, 12.5 });
+	});
+
+	TextBox* ProfileName = new TextBox(profileFrame);
+	ImageLabel* NameLowerLine = new ImageLabel(ProfileName);
+
+	static auto updAnim = [ProfileName, ConfirmName, NameLowerLine]() {
+		if (ProfileName->Text == (*getClientPtr())->userName) {
+			ConfirmName->Active = false;
+			ConfirmName->Visible = false;
+			NameLowerLine->Visible = false;
+			return;
+		}
+
+		if (ProfileName->size()) {
+			ConfirmName->Active = true;
+			ConfirmName->Visible = true;
+			NameLowerLine->Visible = true;
+			Animate::Create(&NameLowerLine->ImageColor, 0.125, DEFAULT_TEXT);
+			Animate::Create(&NameLowerLine->Size.x, 0.125, (float)ProfileName->size() / ProfileName->maxSymbols);
+		}
+		else {
+			ConfirmName->Active = false;
+			ConfirmName->Visible = false;
+			NameLowerLine->Visible = true;
+			Animate::Create(&NameLowerLine->ImageColor, 0.125, { 200,0,0,255 });
+			Animate::Create(&NameLowerLine->Size.x, 0.125, 1);
+		}
+	};
+
+	ProfileName->PositionOFFSET = { 100,15 };
+	ProfileName->PlaceholderText = "Public name";
+	ProfileName->SizeOFFSET = { 255, 45 };
+	ProfileName->BackgroundTransparency = 1;
+	ProfileName->TextColor = mulColor(DEFAULT_TEXT, 0.9);
+	ProfileName->SetText("Profile name");
+	ProfileName->maxSymbols = 40;
+	ProfileName->ClearOnClick = false;
+	ProfileName->FontFace = "SegoeB";
+	ProfileName->Name = "PROFILE_NAME1";
+	ProfileName->CursorColor = mulColor(DEFAULT_TEXT, 0.9);
+	ProfileName->TextAnchor = TextAnchorEnum::W;
+	ProfileName->Type = Viewported;
+	ProfileName->ZIndex = 20;
+	ProfileName->AddEvent(TEXT_CHANGED, [ProfileName, ConfirmName, NameLowerLine](Instance* t) {
+		updAnim();
+	});
+
+	ProfileName->AddEvent(MOUSE_ENTER, [](Instance* t){
+		Beamed_Cursor = true;
+	});
+
+	ProfileName->AddEvent(MOUSE_LEAVE, [](Instance* t){
+		Beamed_Cursor = false;
+	});
+
+	ConfirmName->AddEvent(MOUSE_HOLD_END, [ProfileName, ConfirmName, NameLowerLine](Instance* t) {
+		std::string text = ProfileName->Text;
+		char* input = new char[text.size() + 1];
+		input[text.size()] = '\0';
+		memcpy(input, text.c_str(), text.size());
+		auto as = new AsyncData(input, UPDATE_NAME, text.size() + 1);
+		as->Completed([input, ConfirmName, NameLowerLine](std::pair<const char*, size_t> data) {
+			delete input;
+
+			if (!data.first) {
+				SendInfoMessage("Name confirm warn", "Something went wrong.\nServer Error", ERROR);
+				return;
+			}
+
+			if (!strcmp(data.first, "e1")) {
+				SendInfoMessage("Name confirm error", "Data error (e1)", WARN);
+			}
+			else if (!strcmp(data.first, "w1")) {
+				SendInfoMessage("Name confirm error", "Wrong name (w1)", WARN);
+			}
+			else {
+				(*getClientPtr())->userName = data.first;
+
+				for (Instance* o : StartInstance->getDescendants([](Instance* i) { return i->Name == "PROFILE_NAME"; })) {
+					if (o->Class == TEXTBOX) {
+						TextBox* obj = dynamic_cast<TextBox*>(o);
+						if (obj) {
+							obj->SetText(data.first);
+						}
+					}
+					else {
+						TextLabel* obj = dynamic_cast<TextLabel*>(o);
+						if (obj) {
+							obj->Text = data.first;
+						}
+					}
+				}
+
+				ConfirmName->Active = false;
+				ConfirmName->Visible = false;
+				NameLowerLine->Visible = false;
+			}
+
+			delete[] data.first;
+			});
+		as->send();
+	}, LEFT);
+
+	new ChangedSignal(FocusedTextBox, [ProfileName, ConfirmName, NameLowerLine]() {
+		if (FocusedTextBox == ProfileName) {
+			updAnim();
+		} else {
+			NameLowerLine->Visible = true;
+			Animate::Create(&NameLowerLine->ImageColor, 0.125, DEFAULT_TEXT);
+			Animate::Create(&NameLowerLine->Size.x, 0.125, 1);
+		}
+	});
+
+	NameLowerLine->setImage("textbox_lower_line");
+	NameLowerLine->Size = { 1, 1 };
+	NameLowerLine->Position = { 0, 0 };
+	NameLowerLine->BackgroundTransparency = 1;
+	NameLowerLine->Overlay = STRETCH;
+	NameLowerLine->ImageColor = DEFAULT_TEXT;
+
+	TextLabel* ProfileLogin = new TextLabel(profileFrame);
+	ProfileLogin->PositionOFFSET = { 100,60 };
+	ProfileLogin->SizeOFFSET = { 280, 25 };
+	ProfileLogin->BackgroundTransparency = 1;
+	ProfileLogin->TextColor = { 180,180,180,180 };
+	ProfileLogin->Text = "@Profile login";
+	ProfileLogin->FontFace = "SegoeB";
+	ProfileLogin->Name = "ProfileLogin";
+	ProfileLogin->TextAnchor = TextAnchorEnum::W;
+
+	return 0;
+}
+
+int settingsUI() {
+	if (settingsAnimationScroll) {
+		return 1;
+	}
+
+	settingsAnimationScroll = new ScrollFrame(StartInstance->findChild("GeneralUI background"));
+	settingsAnimationScroll->Size = { 0, 0.85 };
+	settingsAnimationScroll->SizeOFFSET.x = 350;
+	settingsAnimationScroll->BackgroundTransparency = 1;
+	settingsAnimationScroll->ZIndex = 15;
+	settingsAnimationScroll->ScrollEnabled = false;
+	settingsAnimationScroll->ScrollEnabled = false;
+	settingsAnimationScroll->SliderTransparency = 1;
+	settingsAnimationScroll->Direction = 'X';
+	settingsAnimationScroll->AnchorPosition = { 0.5,0.5 };
+	settingsAnimationScroll->Position = { 0.5,0.5 };
+	settingsAnimationScroll->Active = true;
+	settingsAnimationScroll->Name = "settingsAnimationScroll";
+
+	settingsFrame = new Object2D(settingsAnimationScroll);
+	settingsFrame->BackgroundColor = mulColor(DEFAULT_BACKGROUND, 1.2);
+	settingsFrame->Roundness = 0.1;
+	settingsFrame->BorderColor = DEFAULT_BACKGROUND;
+	settingsFrame->BorderThickness = 4;
+	settingsFrame->Name = "SettingsFrame";
+	settingsFrame->Position = { -0.5, 0.5 };
+	settingsFrame->AnchorPosition = { 0.5,0.5 };
+	settingsFrame->Size = { 0.97, 0.97 };
+
+	ScrollFrame* SettingsScroll = new ScrollFrame(settingsFrame);
+	SettingsScroll->Size = { 1,1 };
+	SettingsScroll->BackgroundTransparency = 1;
+	SettingsScroll->CanvasSize.y = 2;
+
+	return 0;
+}
+
+int generalUI() {
+	Object2D* Background = new Object2D(StartInstance);
+	Background->Name = "GeneralUI background";
+	Background->Visible = false;
+	Background->Size = { 1,1 };
+	Background->SizeOFFSET = { 0,-BAR_SIZE };
+	Background->PositionOFFSET = { 0,BAR_SIZE };
+	Background->BackgroundColor = DEFAULT_BACKGROUND;
+	Background->Active = true;
+	Background->ZIndex = 10;
+
+	ImageLabel* ChatBackground = new ImageLabel(Background);
+	ChatBackground->BackgroundColor = DEFAULT_BACKGROUND;
+	ChatBackground->Active = true;
+	ChatBackground->Size.y = 1;
+
+	CurrentChatScroll = new ScrollFrame(ChatBackground);
+	CurrentChatScroll->Active = true;
+	CurrentChatScroll->Animated = false;
+	CurrentChatScroll->Size.y = 1;
+	CurrentChatScroll->Size.x = 1;
+	CurrentChatScroll->SizeOFFSET.y = -80;
+	CurrentChatScroll->PositionOFFSET.y = 30;
+	CurrentChatScroll->BackgroundTransparency = 0.5;
+	CurrentChatScroll->CanvasSize.y = 0;
+	CurrentChatScroll->ScrollSpeed = 0;
+	CurrentChatScroll->ScrollSpeedOFFSET = 200;
+	CurrentChatScroll->SliderColor = {180,180,180,255};
+ 
+	ImageLabel* MessageSend = new ImageLabel(ChatBackground);
+	MessageSend->SizeOFFSET = {50,50};
+	MessageSend->Position = {1,1};
+	MessageSend->PositionOFFSET = {-50,-50};
+	MessageSend->setImage("send");
+	MessageSend->ImageTransparency = 1;
+	MessageSend->BackgroundColor = mulColor(DEFAULT_BACKGROUND, 0.95);
+	MessageSend->ImageColor = DEFAULT_TEXT;
+
+	ChatTextBox = new TextBox(ChatBackground);
+	ChatTextBox->SizeOFFSET.y = 50;
+	ChatTextBox->SizeOFFSET.x = -50;
+	ChatTextBox->Size.x = 1;
+	ChatTextBox->Position.y = 1;
+	ChatTextBox->PositionOFFSET.y = -50;
+	ChatTextBox->TextAnchor = TextAnchorEnum::W;
+	ChatTextBox->PlaceholderText = " Write a message...";
+	ChatTextBox->BackgroundColor = mulColor(DEFAULT_BACKGROUND, 0.95);
+	ChatTextBox->TextSize = 40;
+	ChatTextBox->FontFace = "SegoeB";
+	ChatTextBox->Active = true;
+	ChatTextBox->CursorColor = mulColor(DEFAULT_TEXT, 0.7);
+	ChatTextBox->CursorSize = 1;
+	ChatTextBox->TextColor = mulColor(DEFAULT_TEXT, 0.8);
+	ChatTextBox->AddEvent(TEXT_CHANGED, [MessageSend](Instance* t){
+		Animate::Create(&MessageSend->ImageTransparency, 0.1, ChatTextBox->GetText().size() == 0);
+	});
+
+	TextLabel* UpperChatName = new TextLabel(ChatBackground);
+	UpperChatName->TextColor = DEFAULT_TEXT;
+	UpperChatName->FontFace = "SegoeB";
+	UpperChatName->BackgroundColor = mulColor(DEFAULT_BACKGROUND, 0.9);
+	UpperChatName->TextAnchor = TextAnchorEnum::W;
+	UpperChatName->Text = "  Chat idk";
+	UpperChatName->SizeOFFSET = { 0, 30 };
+	UpperChatName->Size.x = 1;
+
+	Object2D* LeftMenu = new Object2D(Background);
+	LeftMenu->Active = true;
+	LeftMenu->ZIndex = 15;
+	LeftMenu->Size = { 0, 1 };
+	LeftMenu->SizeOFFSET = { 350, 0 };
+	LeftMenu->PositionOFFSET = { -350, 0 };
+	LeftMenu->BackgroundColor = mulColor(DEFAULT_BACKGROUND, 0.9);
+	LeftMenu->Name = "LeftMenu";
+
+	ImageLabel* ProfileImage = new ImageLabel(LeftMenu);
+	ProfileImage->SizeOFFSET = { 80, 80 };
+	ProfileImage->AnchorPosition = { 0.5,0 };
+	ProfileImage->Position = { 0.5,0 };
+	ProfileImage->BackgroundTransparency = 1;
+	ProfileImage->setImage("profile");
+	ProfileImage->ImageColor = DEFAULT_TEXT;
+	ProfileImage->Roundness = 1;
+	ProfileImage->RoundImage = true;
+	ProfileImage->Overlay = CROP;
+	ProfileImage->PositionOFFSET.y = 20;
+	ProfileImage->BorderColor = mulColor(DEFAULT_BACKGROUND, 1.2);
+	ProfileImage->BorderThickness = 5;
+	ProfileImage->Name = "PROFILE_IMAGE";
+
+	TextLabel* ProfileName = new TextLabel(LeftMenu);
+	ProfileName->AnchorPosition = { 0.5,0 };
+	ProfileName->Position = { 0.5,0 };
+	ProfileName->SizeOFFSET = { 350, 50 };
+	ProfileName->BackgroundTransparency = 1;
+	ProfileName->TextColor = mulColor(DEFAULT_TEXT, 0.7);
+	ProfileName->PositionOFFSET.y = 110;
+	ProfileName->Text = "Profile name";
+	ProfileName->FontFace = "SegoeB";
+	ProfileName->Name = "PROFILE_NAME";
+	ProfileName->MaxVisibleSymbols = 20;
+
+	TextLabel* UserID = new TextLabel(LeftMenu);
+	UserID->BackgroundTransparency = 1;
+	UserID->TextColor = mulColor(DEFAULT_TEXT, 0.5);
+	UserID->Size = { 1, 0 };
+	UserID->SizeOFFSET.y = 30;
+	UserID->Position.y = 1;
+	UserID->PositionOFFSET.y = -30;
+	UserID->FontFace = "SegoeB";
+	UserID->Text = "UserID";
+	UserID->Name = "UserID";
+
+	{ // PROFILE BUTTON
+		Object2D* ProfileButtonFull = new Object2D(LeftMenu);
+		ProfileButtonFull->BackgroundTransparency = 1;
+		ProfileButtonFull->BackgroundColor = { 255,255,255,255 };
+		ProfileButtonFull->Size.x = 1;
+		ProfileButtonFull->SizeOFFSET.y = 30;
+		ProfileButtonFull->Active = true;
+		ProfileButtonFull->PositionOFFSET.y = 180;
+		ProfileButtonFull->AnchorPosition.x = 0.5;
+		ProfileButtonFull->Position.x = 0.5;
+		ProfileButtonFull->AddEvent(MOUSE_ENTER, [ProfileButtonFull](Instance* t) {
+			Animate::Create(&ProfileButtonFull->BackgroundTransparency, 0.125, 0.85);
+		});
+		ProfileButtonFull->AddEvent(MOUSE_LEAVE, [ProfileButtonFull](Instance* t) {
+			Animate::Create(&ProfileButtonFull->BackgroundTransparency, 0.125, 1);
+		});
+		ProfileButtonFull->AddEvent(MOUSE_HOLD_END, [](Instance* t) {
+			GlobalStates::UIstate = PROFILE;
+		}, LEFT);
+
+		ImageLabel* ProfileButtonImage = new ImageLabel(ProfileButtonFull);
+		ProfileButtonImage->BackgroundTransparency = 1;
+		ProfileButtonImage->setImage("profile");
+		ProfileButtonImage->ImageColor = mulColor(DEFAULT_TEXT, 0.7);
+		ProfileButtonImage->Size = { 0.2, 0.8 };
+		ProfileButtonImage->Position.y = 0.1;
+
+		TextLabel* ProfileButton = new TextLabel(ProfileButtonFull);
+		ProfileButton->TextColor = mulColor(DEFAULT_TEXT, 0.7);
+		ProfileButton->Text = "My profile";
+		ProfileButton->BackgroundTransparency = 1;
+		ProfileButton->Size = { 0.8, 1 };
+		ProfileButton->Position.x = 0.2;
+		ProfileButton->FontFace = "SegoeB";
+		ProfileButton->TextAnchor = TextAnchorEnum::W;
+	}
+
+	{ // SETTINGS BUTTON
+		Object2D* SettingsButtonFull = new Object2D(LeftMenu);
+		SettingsButtonFull->BackgroundTransparency = 1;
+		SettingsButtonFull->BackgroundColor = { 255,255,255,255 };
+		SettingsButtonFull->Size.x = 1;
+		SettingsButtonFull->SizeOFFSET.y = 30;
+		SettingsButtonFull->Active = true;
+		SettingsButtonFull->PositionOFFSET.y = 220;
+		SettingsButtonFull->AnchorPosition.x = 0.5;
+		SettingsButtonFull->Position.x = 0.5;
+		SettingsButtonFull->AddEvent(MOUSE_ENTER, [SettingsButtonFull](Instance* t) {
+			Animate::Create(&SettingsButtonFull->BackgroundTransparency, 0.125, 0.85);
+		});
+		SettingsButtonFull->AddEvent(MOUSE_LEAVE, [SettingsButtonFull](Instance* t) {
+			Animate::Create(&SettingsButtonFull->BackgroundTransparency, 0.125, 1);
+		});
+		SettingsButtonFull->AddEvent(MOUSE_HOLD_END, [](Instance* t) {
+			GlobalStates::UIstate = SETTINGS;
+		}, LEFT);
+
+		ImageLabel* SettingsButtonImage = new ImageLabel(SettingsButtonFull);
+		SettingsButtonImage->BackgroundTransparency = 1;
+		SettingsButtonImage->setImage("settings");
+		SettingsButtonImage->ImageColor = mulColor(DEFAULT_TEXT, 0.7);
+		SettingsButtonImage->Size = { 0.2, 0.8 };
+		SettingsButtonImage->Position.y = 0.1;
+
+		TextLabel* SettingsButton = new TextLabel(SettingsButtonFull);
+		SettingsButton->TextColor = mulColor(DEFAULT_TEXT, 0.7);
+		SettingsButton->Text = "Settings";
+		SettingsButton->BackgroundTransparency = 1;
+		SettingsButton->Size = { 0.8, 1 };
+		SettingsButton->Position.x = 0.2;
+		SettingsButton->FontFace = "SegoeB";
+		SettingsButton->TextAnchor = TextAnchorEnum::W;
+	}
+
+	Object2D* BackToGeneral = new Object2D(Background);
+	BackToGeneral->Size = { 1,1 };
+	BackToGeneral->BackgroundTransparency = 1;
+	BackToGeneral->ZIndex = 14;
+	BackToGeneral->Active = true;
+	BackToGeneral->AddEvent(MOUSE_CLICK, [](Instance* t) {
+		GlobalStates::UIstate = GENERAL;
+	}, LEFT);
+
+	ImageLabel* ClientProfileButton = new ImageLabel(Background);
+	ClientProfileButton->BackgroundTransparency = 1;
+	ClientProfileButton->BackgroundColor = DEFAULT_TEXT;
+	ClientProfileButton->SizeOFFSET = { 30,30 };
+	ClientProfileButton->PositionOFFSET = { 30,20 };
+	ClientProfileButton->Active = true;
+	ClientProfileButton->AnchorPosition = { 0.5, 0.5 };
+	ClientProfileButton->setImage("list");
+	ClientProfileButton->ImageColor = mulColor(DEFAULT_TEXT, 0.8);
+	ClientProfileButton->Roundness = 0.2;
+	ClientProfileButton->AddEvent(MOUSE_ENTER, [ClientProfileButton](Instance* t) {
+		Animate::Create(&ClientProfileButton->SizeOFFSET, 0.125, { 35, 35 });
+		Animate::Create(&ClientProfileButton->ImageColor, 0.125, DEFAULT_TEXT);
+		Animate::Create(&ClientProfileButton->BackgroundTransparency, 0.125, 0.95);
+	});
+	ClientProfileButton->AddEvent(MOUSE_LEAVE, [ClientProfileButton](Instance* t) {
+		Animate::Create(&ClientProfileButton->SizeOFFSET, 0.125, { 30, 30 });
+		Animate::Create(&ClientProfileButton->ImageColor, 0.125, mulColor(DEFAULT_TEXT, 0.8));
+		Animate::Create(&ClientProfileButton->BackgroundTransparency, 0.125, 1);
+	});
+	ClientProfileButton->AddEvent(MOUSE_HOLD_END, [](Instance* t) {
+		GlobalStates::UIstate = LEFT_MENU;
+	}, LEFT);
+
+	ScrollFrame* ChatScroll = new ScrollFrame(Background);
+	ChatScroll->Size.y = 1;
+	ChatScroll->PositionOFFSET.y = 40;
+	ChatScroll->SizeOFFSET.y = -40;
+	ChatScroll->SizeOFFSET.x = 350;
+	ChatScroll->Active = true;
+	ChatScroll->Animated = true;
+	ChatScroll->ZIndex = 5;
+	ChatScroll->BackgroundColor = mulColor(DEFAULT_BACKGROUND, 0.8);
+	ChatScroll->SliderColor = { 255,255,255,255 };
+	ChatScroll->SliderSize = 3;
+	ChatScroll->SliderTransparency = 1;
+	ChatScroll->ScrollSpeed = 0.25;
+	ChatScroll->EnterEventCondition = SUI_EEC::EEC_IF_DESCENDANT_HIGHER;
+	ChatScroll->AddEvent(MOUSE_ENTER, [ChatScroll](Instance* t) {
+		Animate::Create(&ChatScroll->SliderTransparency, 0.125, 0.5);
+	});
+	ChatScroll->AddEvent(MOUSE_LEAVE, [ChatScroll](Instance* t) {
+		Animate::Create(&ChatScroll->SliderTransparency, 0.125, 1);
+	});
+
+	static bool resizing = false;
+	static int max = 1000;
+	static int min = 400;
+	static bool isMinimal = false;
+
+	static auto setFullScrollMode = [ChatScroll]() {
+		isMinimal = false;
+		};
+
+	static auto setMinimalScrollMode = [ChatScroll]() {
+		isMinimal = true;
+		};
+
+	static int backOffsetX = 0;
+
+	ChatScroll->AddEvent(TICK, [ChatScroll](Instance* t) {
+		if (FocusedTextBox == nullptr and GlobalStates::UIstate == GENERAL and ChatScroll->pointInObject(GetMousePosition())) {
+			static bool key1Down = false;
+			static bool key2Down = false;
+
+			if (IsKeyPressed(KEY_DOWN)) {
+				key1Down = true;
+			}
+
+			if (IsKeyPressed(KEY_UP)) {
+				key2Down = true;
+			}
+
+			if (IsKeyUp(KEY_DOWN)) {
+				key1Down = false;
+			}
+
+			if (IsKeyUp(KEY_UP)) {
+				key2Down = false;
+			}
+
+			if (key1Down) {
+				ChatScroll->CanvasPosition.y += CHAT_SIZE / ChatScroll->RealSize.y * dt * 8;
+			}
+			else if (key2Down) {
+				ChatScroll->CanvasPosition.y -= CHAT_SIZE / ChatScroll->RealSize.y * dt * 8;
+			}
+		}
+
+		Vector2 mousePos = ChatScroll->getMousePosition();
+		if (ChatScroll->RealSize.x - mousePos.x * ChatScroll->RealSize.x < 7 and mousePos.x <= 1 and (ChatScroll->RealSize.y - mousePos.y * ChatScroll->RealSize.y) > 10 and (mousePos.y * ChatScroll->RealSize.y) > BAR_SIZE and GlobalStates::UIstate == GENERAL) {
+			if (IsMouseButtonPressed(MOUSE_LEFT_BUTTON)) {
+				backOffsetX = ChatScroll->RealSize.x - mousePos.x * ChatScroll->RealSize.x;
+				resizing = true;
+			}
+
+			Resizing_EW = true;
+		}
+		else if (!resizing) {
+			Resizing_EW = false;
+		}
+
+		if (IsMouseButtonReleased(MOUSE_LEFT_BUTTON)) {
+			Resizing_EW = false;
+			resizing = false;
+		}
+
+		if (ChatScroll->SizeOFFSET.x + min > winWidth) {
+			ChatScroll->SizeOFFSET.x = winWidth - min;
+		}
+
+		if (resizing) {
+			int newPos = ChatScroll->RealSize.x * mousePos.x + backOffsetX;
+
+			if (newPos > 1000) newPos = 1000;
+			if (newPos < 200 and newPos > 100) newPos = 200;
+			if (newPos + min > winWidth) {
+				newPos = winWidth - min;
+			}
+
+			if (newPos <= 100) {
+				setMinimalScrollMode();
+				ChatScroll->SizeOFFSET.x = 60;
+			}
+			else {
+				if (isMinimal) {
+					setFullScrollMode();
+				}
+				ChatScroll->SizeOFFSET.x = newPos;
+			}
+		}
+		});
+
+	auto updateChatScroll = [ChatBackground, ChatScroll]() {
+		ChatBackground->SizeOFFSET.x = winWidth - ChatScroll->SizeOFFSET.x;
+		ChatBackground->PositionOFFSET.x = ChatScroll->SizeOFFSET.x;
+		};
+
+	new ChangedSignal(ChatScroll->SizeOFFSET.x, updateChatScroll);
+	new ChangedSignal(winWidth, updateChatScroll);
+
+	Folder* ChatsFolder = new Folder(ChatScroll);
+	ChatsFolder->Name = "ChatsFolder";
+
+	ChatTemplate = new Object2D(ChatScroll);
+	ChatTemplate->BackgroundTransparency = 1;
+	ChatTemplate->Name = "ChatTemplate";
+	ChatTemplate->BackgroundColor = { 255,255,255,255 };
+	ChatTemplate->SizeOFFSET = { -5, CHAT_SIZE };
+	ChatTemplate->Size = { 1, 0 };
+	ChatTemplate->PositionOFFSET = { 0, 0 * CHAT_SIZE * 3 };
+	ChatTemplate->Active = true;
+	ChatTemplate->Visible = false;
+
+	ImageLabel* ChatIcon = new ImageLabel(ChatTemplate);
+	ChatIcon->Name = "Icon";
+	ChatIcon->SizeOFFSET = { CHAT_SIZE * 0.8, CHAT_SIZE * 0.8 };
+	ChatIcon->BackgroundTransparency = 1;
+	ChatIcon->Roundness = 1;
+	ChatIcon->RoundImage = true;
+	ChatIcon->PositionOFFSET = { CHAT_SIZE * 0.5, CHAT_SIZE * 0.5 };
+	ChatIcon->AnchorPosition = { 0.5, 0.5 };
+	ChatIcon->setImage("app_icon");
+	ChatIcon->Name = "ChatIcon";
+
+	TextLabel* ChatName = new TextLabel(ChatTemplate);
+	ChatName->Name = "Name";
+	ChatName->PositionOFFSET = { CHAT_SIZE + 20, 2 };
+	ChatName->SizeOFFSET = { 1000 - CHAT_SIZE - 20, 0 };
+	ChatName->Size = { 0, 0.5 };
+	ChatName->BackgroundTransparency = 1;
+	ChatName->Name = "ChatName";
+	ChatName->FontFace = "SegoeB";
+	ChatName->MaxVisibleSymbols = 70;
+	ChatName->TextAnchor = TextAnchorEnum::W;
+	ChatName->TextColor = mulColor(DEFAULT_TEXT, 0.8);
+	ChatName->Text = "12345678901234567890123456789012345678901234567890123456789012345678901234567890";
+
+	TextLabel* ChatLastMsg = new TextLabel(ChatTemplate);
+	ChatLastMsg->Name = "LastMsg";
+	ChatLastMsg->PositionOFFSET = { CHAT_SIZE + 20, 2 + CHAT_SIZE * 0.55 };
+	ChatLastMsg->SizeOFFSET = { 1000 - CHAT_SIZE - 20, 0 };
+	ChatLastMsg->Size = { 0, 0.3 };
+	ChatLastMsg->BackgroundTransparency = 1;
+	ChatLastMsg->Name = "ChatLastMsg";
+	ChatLastMsg->FontFace = "SegoeB";
+	ChatLastMsg->MaxVisibleSymbols = 110;
+	ChatLastMsg->TextAnchor = TextAnchorEnum::W;
+	ChatLastMsg->TextColor = mulColor(DEFAULT_TEXT, 0.8);
+	ChatLastMsg->Text = "абвгдеёзжиабвгдеёзжиабвгдеёзжиабвгдеёзжиабвгдеёзжиабвгдеёзжиабвгдеёзжиабвгдеёзжиабвгдеёзжиабвгдеёзжиабвгдеёзжи";
+
+	ChatTemplate->AddEvent(MOUSE_ENTER, [](Instance* t) {
+		ImageLabel* ChatIcon = static_cast<ImageLabel*>(t->findChild("ChatIcon"));
+		TextLabel* ChatName = static_cast<TextLabel*>(t->findChild("ChatName"));
+
+		Animate::Create(&static_cast<Object2D*>(t)->BackgroundTransparency, 0.125, 0.9);
+		Animate::Create(&ChatIcon->SizeOFFSET, 0.055, { CHAT_SIZE * 0.95, CHAT_SIZE * 0.95 });
+		Animate::Create(&ChatName->TextColor, 0.055, { mulColor(DEFAULT_TEXT, 1) });
+	});
+	ChatTemplate->AddEvent(MOUSE_LEAVE, [](Instance* t) {
+		ImageLabel* ChatIcon = static_cast<ImageLabel*>(t->findChild("ChatIcon"));
+		TextLabel* ChatName = static_cast<TextLabel*>(t->findChild("ChatName"));
+
+		Animate::Create(&static_cast<Object2D*>(t)->BackgroundTransparency, 0.125, 1);
+		Animate::Create(&ChatIcon->SizeOFFSET, 0.055, { CHAT_SIZE * 0.8, CHAT_SIZE * 0.8 });
+		Animate::Create(&ChatName->TextColor, 0.055, { mulColor(DEFAULT_TEXT, 0.8) });
+	});
+	ChatTemplate->AddEvent(MOUSE_HOLD_END, [](Instance* t){
+		Chat* chat = static_cast<AddressValue<Chat>*>(t->findChildOfClass(ADDRESS_VALUE))->Value;
+		if (chat) {
+			changeCurrentChat(chat->ChatID);
+		} else {
+			SendInfoMessage("Chat load", "Something went wrong (c1)", ERROR);
+		}
+	}, LEFT);
+
+	new ChangedSignal<bool>(Authenticated, [&]() {
+		if (Authenticated) {
+			dynamic_cast<Object2D*>(StartInstance->findChild("GeneralUI background"))->Visible = true;
+			Object2D* authFrame = dynamic_cast<Object2D*>(StartInstance->findChild("Auth Frame"));
+			authFrame->Visible = true;
+			authFrame->Position = { 0, 0 };
+			GlobalStates::UIstate = GENERAL;
+
+			Animate::Animation* anim = Animate::Create(&authFrame->Position.x, 0.125, 1);
+			anim->Completed = [authFrame]() {
+				authFrame->Visible = false;
+				};
+		}
+		else {
+			Object2D* generalFrame = dynamic_cast<Object2D*>(StartInstance->findChild("GeneralUI background"));
+			generalFrame->Visible = true;
+			Object2D* authFrame = dynamic_cast<Object2D*>(StartInstance->findChild("Auth Frame"));
+			authFrame->Visible = true;
+			authFrame->Position = { -1, 0 };
+			GlobalStates::UIstate = AUTH;
+
+			Animate::Animation* anim = Animate::Create(&authFrame->Position.x, 0.125, 0);
+			anim->Completed = [generalFrame]() {
+				generalFrame->Visible = false;
+				};
+		}
+		});
+
+	new ChangedSignal<bool>(ChatsUpdated, [ChatsFolder, ChatScroll]() {
+		if (ChatsUpdated) {
+			loadChatsMutex.lock();
+
+			ChatsUpdated = false;
+			ChatsFolder->deleteAllChildren();
+
+			int i = 0;
+			for (auto& [id, chat] : LoadedChats) {
+				Object2D* newChat = ChatTemplate->Clone();
+				newChat->setParent(ChatScroll);
+				newChat->Name = std::to_string(chat->ChatID);
+				ImageLabel* icon = static_cast<ImageLabel*>(newChat->findChild("ChatIcon"));
+				TextLabel* name = static_cast<TextLabel*>(newChat->findChild("ChatName"));
+				TextLabel* lastMsg = static_cast<TextLabel*>(newChat->findChild("ChatLastMsg"));
+
+				AddressValue<Chat>* chatPtr = new AddressValue<Chat>(newChat);
+				chatPtr->Value = chat; 
+
+				if (name) {
+					name->Text = chat->Name;
+				}
+
+				if (lastMsg) {
+					lastMsg->Text = "Last Message";
+				}
+
+				newChat->Visible = true;
+				newChat->PositionOFFSET.y = CHAT_SIZE * i++;
+			}
+			loadChatsMutex.unlock();
+		}
+	});
+
+	new ChangedSignal<WhereOnUI>(GlobalStates::UIstate, [BackToGeneral, LeftMenu]() {
+		constexpr static float AnimationTime = 0.1;
+		constexpr static Animate::Function SettingsAnimationType = Animate::Function::Exponential;
+
+		switch (GlobalStates::UIstate) {
+		case GENERAL: {
+			settingsAnimationScroll->Active = false;
+			profileFrame->Active = false;
+			BackToGeneral->Active = false;
+			LeftMenu->Active = false;
+			Animate::Create(&BackToGeneral->BackgroundTransparency, AnimationTime, 1);
+			Animate::Create(&LeftMenu->PositionOFFSET.x, AnimationTime, -LeftMenu->SizeOFFSET.x);
+			auto a1 = Animate::Create(&settingsFrame->Position.x, 0.1, 0.5, SettingsAnimationType);
+			a1->Completed = []() {
+				settingsAnimationScroll->Visible = false;
+			};
+			auto a2 = Animate::Create(&profileFrame->SizeOFFSET, 0.15, { 0,0 });
+			a2->Completed = []() {
+				profileFrame->Visible = false;
+			};
+			break;
+		}
+		case LEFT_MENU: {
+			settingsAnimationScroll->Active = false;
+			profileFrame->Active = false;
+			BackToGeneral->Active = true;
+			LeftMenu->Active = true;
+			Animate::Create(&BackToGeneral->BackgroundTransparency, AnimationTime, 0.7);
+			Animate::Create(&LeftMenu->PositionOFFSET.x, AnimationTime, 0);
+			auto a1 = Animate::Create(&settingsFrame->Position.x, 0.1, 0.5, SettingsAnimationType);
+			a1->Completed = []() {
+				settingsAnimationScroll->Visible = false;
+			};
+			auto a2 = Animate::Create(&profileFrame->SizeOFFSET, 0.15, { 0,0 });
+			a2->Completed = []() {
+				profileFrame->Visible = false;
+			};
+			break;
+		}
+		case AUTH: {
+			settingsAnimationScroll->Active = false;
+			profileFrame->Active = false;
+			BackToGeneral->Active = false;
+			LeftMenu->Active = false;
+			Animate::Create(&BackToGeneral->BackgroundTransparency, AnimationTime, 1);
+			Animate::Create(&LeftMenu->PositionOFFSET.x, AnimationTime, -LeftMenu->SizeOFFSET.x);
+			auto a1 = Animate::Create(&settingsFrame->Position.x, 0.1, 0.5, SettingsAnimationType);
+			a1->Completed = []() {
+				settingsAnimationScroll->Visible = false;
+			};
+			auto a2 = Animate::Create(&profileFrame->SizeOFFSET, 0.15, { 0,0 });
+			a2->Completed = []() {
+				profileFrame->Visible = false;
+			};
+			break;
+		}
+		case PROFILE: {
+			settingsAnimationScroll->Active = false;
+			profileFrame->Active = true;
+			profileFrame->Visible = true;
+			BackToGeneral->Active = true;
+			LeftMenu->Active = false;
+			Animate::Create(&BackToGeneral->BackgroundTransparency, AnimationTime, 0.7);
+			Animate::Create(&LeftMenu->PositionOFFSET.x, AnimationTime, -LeftMenu->SizeOFFSET.x);
+			auto a1 = Animate::Create(&settingsFrame->Position.x, 0.1, 0.5, SettingsAnimationType);
+			a1->Completed = []() {
+				settingsAnimationScroll->Visible = false;
+			};
+			auto a2 = Animate::Create(&profileFrame->SizeOFFSET, 0.15, { 400,450 }, Animate::Quad);
+			break;
+		}
+		case SETTINGS: {
+			settingsAnimationScroll->Active = true;
+			settingsAnimationScroll->Visible = true;
+			profileFrame->Active = false;
+			BackToGeneral->Active = true;
+			LeftMenu->Active = false;
+			Animate::Create(&BackToGeneral->BackgroundTransparency, AnimationTime, 0.7);
+			Animate::Create(&LeftMenu->PositionOFFSET.x, AnimationTime, -LeftMenu->SizeOFFSET.x);
+			settingsFrame->Position.x = 1.5;
+			auto a1 = Animate::Create(&settingsFrame->Position.x, 0.1, 0.5, SettingsAnimationType);
+			auto a2 = Animate::Create(&profileFrame->SizeOFFSET, 0.15, { 0,0 });
+			a2->Completed = []() {
+				profileFrame->Visible = false;
+			};
+			break;
+		}
+		}
+	});
+
+	return 0;
+}
+
+void initialInterface() {
+	serverDataFunction([](std::pair<networkHeader, std::pair<char*, size_t>> data) {
+		std::cout << "Server data: " << data.second.first << " " << data.second.second << std::endl;
+	});
+
+	StartInstance = new Instance(true);
+	StartInstance->Name = "Root";
+	addFontToQueqe("Segoe", PATH_TO_SOURCES + "Fonts/segoeui.ttf", 100);
+	addFontToQueqe("SegoeB", PATH_TO_SOURCES + "Fonts/segoeuib.ttf", 100);
+	
+	loadImage("textbox_eye", PATH_TO_SOURCES + "textures/textbox_eye.png");
+	loadImage("app_icon", PATH_TO_SOURCES + "textures/icon.png");
+	loadImage("auth_background", PATH_TO_SOURCES + "textures/auth_background.png");
+	loadImage("exit", PATH_TO_SOURCES + "textures/exit.png");
+	loadImage("window", PATH_TO_SOURCES + "textures/window.png");
+	loadImage("hide", PATH_TO_SOURCES + "textures/hide.png");
+	loadImage("list", PATH_TO_SOURCES + "textures/list.png");
+	loadImage("profile", PATH_TO_SOURCES + "textures/profile.png");
+	loadImage("settings", PATH_TO_SOURCES + "textures/settings.png");
+	loadImage("change_pencil", PATH_TO_SOURCES + "textures/pencil.png");
+	loadImage("checked", PATH_TO_SOURCES + "textures/checked.png");
+	loadImage("textbox_lower_line", PATH_TO_SOURCES + "textures/textbox_lower_line.png");
+	loadImage("send", PATH_TO_SOURCES + "textures/send.png");
+
+	int barReturn = initUpperBar();
+	if (barReturn) {
+		std::cerr << "Error in initUpperBar: " << barReturn << std::endl;
+		exit(barReturn);
+	}
+
+	int authReturn = initAuth();
+	if (authReturn) {
+		std::cerr << "Error in initAuth: " << authReturn << std::endl;
+		exit(authReturn);
+	}
+
+	int generalReturn = generalUI();
+	if (generalReturn) {
+		std::cerr << "Error in generalUI: " << generalReturn << std::endl;
+		exit(generalReturn);
+	}
+
+	int settingsReturn = settingsUI();
+	if (settingsReturn) {
+		std::cerr << "Error in settingsUI: " << settingsReturn << std::endl;
+		exit(settingsReturn);
+	}
+
+	int profileReturn = profileUI();
+	if (profileReturn) {
+		std::cerr << "Error in profileUI: " << profileReturn << std::endl;
+		exit(profileReturn);
+	}
+
+	start(*StartInstance, { 1200, 800, 0 }, "Nexora", "textures/icon.png", FLAG_WINDOW_UNDECORATED | FLAG_WINDOW_RESIZABLE);
+}
