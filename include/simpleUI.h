@@ -10,15 +10,23 @@
 //																												//
 //      ! IF YOU NEED SOME RAYLIB FUNCTIONS/STRUCTURES USE RAYLIB_FUNCTIONAL:: NAMESPACE TO USE THEM !          //
 //																												//
-// Changed Logs:																								//
+// Change Logs:																								    //
 // Better child event system																					//
 // Text class for management TextLabel and TextBox (TEXT_CHANGED events optimization)							//
 // Additional events for objects (like TEXT_CHANGED on text-objects)											//
 // Textures RAM & VRAM optimization																				//
 // A few CPU optimizations																						//
 // Spacial Grid optimization for ScrollFrame (millions of objects with thousands of FPS)					    //
+// TextBox input can be on any language (any UTF-8 character)													//
+// TextBox now supports clipboard and text highlighting															//
 //																												//
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+// ДОДЕЛАТЬ СТРЕЛКИ ВВЕРХ И ВНИЗ У ТЕКСТБОКС
+// СДЕЛАТЬ В ТЕКСТБОКСЕ ВЬЮПОРТ ДЛЯ Y
+
+#define SIMPLEUI_INCLUDE_EXTENSION // Extension for simpleUI. Contains additional unnecesary 2D objects (GraphBuilder, !ToggleSwitcher, !CheckBox, !MultiCheckBox, !ComboBox, !ProgressBar, !DropdownBox)
+// IF YOU DON'T NEED SIMPLEUI EXTENSION THEN USE "#define EXCLUDE_SIMPLEUI_EXTENSION" BEFORE INCLUDING simpleUI.h
 
 #pragma once
 #ifdef _WIN32
@@ -52,6 +60,7 @@ using RAYLIB_FUNCTIONAL::SetTraceLogLevel;
 using RAYLIB_FUNCTIONAL::SetWindowSize;
 using RAYLIB_FUNCTIONAL::InitWindow;
 using RAYLIB_FUNCTIONAL::CloseWindow;
+using RAYLIB_FUNCTIONAL::CodepointToUTF8;
 using RAYLIB_FUNCTIONAL::GetWindowPosition;
 using RAYLIB_FUNCTIONAL::GetScreenWidth;
 using RAYLIB_FUNCTIONAL::GetScreenHeight;
@@ -60,6 +69,8 @@ using RAYLIB_FUNCTIONAL::GetMousePosition;
 using RAYLIB_FUNCTIONAL::GetMonitorRefreshRate;
 using RAYLIB_FUNCTIONAL::GetCurrentMonitor;
 using RAYLIB_FUNCTIONAL::GetMouseWheelMove;
+using RAYLIB_FUNCTIONAL::GetCharPressed;
+using RAYLIB_FUNCTIONAL::GetClipboardText;
 using RAYLIB_FUNCTIONAL::IsKeyDown;
 using RAYLIB_FUNCTIONAL::IsKeyPressed;
 using RAYLIB_FUNCTIONAL::IsMouseButtonPressed;
@@ -104,6 +115,7 @@ using RAYLIB_FUNCTIONAL::TEXTURE_WRAP_CLAMP;
 
 using RAYLIB_FUNCTIONAL::FLAG_WINDOW_UNDECORATED;
 using RAYLIB_FUNCTIONAL::FLAG_WINDOW_RESIZABLE;
+using RAYLIB_FUNCTIONAL::FLAG_MSAA_4X_HINT;
 
 using RAYLIB_FUNCTIONAL::PIXELFORMAT_UNCOMPRESSED_R8G8B8;
 using RAYLIB_FUNCTIONAL::PIXELFORMAT_UNCOMPRESSED_R8G8B8A8;
@@ -126,67 +138,19 @@ using RAYLIB_FUNCTIONAL::MOUSE_CURSOR_IBEAM;
 
 using RAYLIB_FUNCTIONAL::LOG_NONE;
 
-using RAYLIB_FUNCTIONAL::KeyboardKey;
 using RAYLIB_FUNCTIONAL::KEY_LEFT_SHIFT;
-using RAYLIB_FUNCTIONAL::KEY_ONE;
-using RAYLIB_FUNCTIONAL::KEY_TWO;
-using RAYLIB_FUNCTIONAL::KEY_THREE;
-using RAYLIB_FUNCTIONAL::KEY_FOUR;
-using RAYLIB_FUNCTIONAL::KEY_FIVE;
-using RAYLIB_FUNCTIONAL::KEY_SIX;
-using RAYLIB_FUNCTIONAL::KEY_SEVEN;
-using RAYLIB_FUNCTIONAL::KEY_EIGHT;
-using RAYLIB_FUNCTIONAL::KEY_NINE;
-using RAYLIB_FUNCTIONAL::KEY_ZERO;
-using RAYLIB_FUNCTIONAL::KEY_Q;
-using RAYLIB_FUNCTIONAL::KEY_W;
-using RAYLIB_FUNCTIONAL::KEY_E;
-using RAYLIB_FUNCTIONAL::KEY_R;
-using RAYLIB_FUNCTIONAL::KEY_T;
-using RAYLIB_FUNCTIONAL::KEY_Y;
-using RAYLIB_FUNCTIONAL::KEY_U;
-using RAYLIB_FUNCTIONAL::KEY_I;
-using RAYLIB_FUNCTIONAL::KEY_O;
-using RAYLIB_FUNCTIONAL::KEY_P;
-using RAYLIB_FUNCTIONAL::KEY_A;
-using RAYLIB_FUNCTIONAL::KEY_S;
-using RAYLIB_FUNCTIONAL::KEY_D;
-using RAYLIB_FUNCTIONAL::KEY_F;
-using RAYLIB_FUNCTIONAL::KEY_G;
-using RAYLIB_FUNCTIONAL::KEY_H;
-using RAYLIB_FUNCTIONAL::KEY_J;
-using RAYLIB_FUNCTIONAL::KEY_K;
-using RAYLIB_FUNCTIONAL::KEY_L;
-using RAYLIB_FUNCTIONAL::KEY_SEMICOLON;
-using RAYLIB_FUNCTIONAL::KEY_APOSTROPHE;
-using RAYLIB_FUNCTIONAL::KEY_Z;
-using RAYLIB_FUNCTIONAL::KEY_X;
 using RAYLIB_FUNCTIONAL::KEY_C;
 using RAYLIB_FUNCTIONAL::KEY_V;
-using RAYLIB_FUNCTIONAL::KEY_B;
-using RAYLIB_FUNCTIONAL::KEY_N;
-using RAYLIB_FUNCTIONAL::KEY_M;
-using RAYLIB_FUNCTIONAL::KEY_COMMA;
-using RAYLIB_FUNCTIONAL::KEY_PERIOD;
-using RAYLIB_FUNCTIONAL::KEY_SLASH;
-using RAYLIB_FUNCTIONAL::KEY_SPACE;
-using RAYLIB_FUNCTIONAL::KEY_MINUS;
-using RAYLIB_FUNCTIONAL::KEY_EQUAL;
-using RAYLIB_FUNCTIONAL::KEY_LEFT_BRACKET;
-using RAYLIB_FUNCTIONAL::KEY_RIGHT_BRACKET;
-using RAYLIB_FUNCTIONAL::KEY_BACKSLASH;
-using RAYLIB_FUNCTIONAL::KEY_GRAVE;
 using RAYLIB_FUNCTIONAL::KEY_BACKSPACE;
 using RAYLIB_FUNCTIONAL::KEY_LEFT_CONTROL;
 using RAYLIB_FUNCTIONAL::KEY_DELETE;
 using RAYLIB_FUNCTIONAL::KEY_LEFT;
 using RAYLIB_FUNCTIONAL::KEY_RIGHT;
-using RAYLIB_FUNCTIONAL::KEY_DOWN;
-using RAYLIB_FUNCTIONAL::KEY_UP;
 using RAYLIB_FUNCTIONAL::KEY_NULL;
 using RAYLIB_FUNCTIONAL::KEY_F1;
 using RAYLIB_FUNCTIONAL::KEY_F2;
 using RAYLIB_FUNCTIONAL::KEY_F3;
+using RAYLIB_FUNCTIONAL::KEY_ENTER;
 
 using RAYLIB_FUNCTIONAL::SHADER_UNIFORM_FLOAT;
 using RAYLIB_FUNCTIONAL::SHADER_UNIFORM_VEC4;
@@ -209,6 +173,18 @@ using RAYLIB_FUNCTIONAL::SHADER_UNIFORM_VEC4;
 class Object2D;
 
 void updateObject2DVector(Object2D*);
+
+struct ScaleOffset {
+	int Offset = 0; // value in pixels
+	float Scale = 0; // relative value
+};
+
+struct Padding {
+	ScaleOffset upper = { 0,0 };
+	ScaleOffset lower = { 0,0 };
+	ScaleOffset left = { 0,0 };
+	ScaleOffset right = { 0,0 };
+};
 
 struct SpecialVector2 {
 	template <size_t Index>
@@ -657,10 +633,10 @@ enum EventType {
 };
 
 enum MouseButtonType {
-	NONE = -1,
-	LEFT = MOUSE_BUTTON_LEFT,
-	RIGHT = MOUSE_BUTTON_RIGHT,
-	MIDDLE = MOUSE_BUTTON_MIDDLE
+	MOUSE_NONE = -1,
+	MOUSE_LEFT = MOUSE_BUTTON_LEFT,
+	MOUSE_RIGHT = MOUSE_BUTTON_RIGHT,
+	MOUSE_MIDDLE = MOUSE_BUTTON_MIDDLE
 };
 
 namespace Animate {
@@ -932,8 +908,9 @@ inline Object2D* higherObject = nullptr;
 inline std::unordered_map<long, Instance*> deletedObjectsByID;
 inline std::unordered_map<Instance*, long> deletedObjectsByPtr;
 
-enum InstanceType {
+enum InstanceType : int {
 	INSTANCE = 0,
+
 	OBJECT2D,
 	TEXTLABEL,
 	TEXTBOX,
@@ -951,7 +928,15 @@ enum InstanceType {
 	VECTOR2_VALUE,
 	COLOR_VALUE,
 
-	FOLDER
+	FOLDER,
+
+	// Additional classes from SUIextension.h
+	GRAPHBUILDER,
+	TOGGLESWITCHER,
+	CHECKBOX,
+	MULTICHECKBOX,
+	COMBOBOX,
+	PROGRESSBAR
 };
 
 Instance* getAncestorWhichParentIsScrollFrame(Instance* ptr);
@@ -1269,26 +1254,7 @@ Instance* getAncestorWhichParentIsScrollFrame(Instance* ptr) {
 	return nullptr;
 }
 
-bool Is2DInheritor(Instance* obj) {
-	if (obj->Class == INSTANCE or
-		obj->Class == LINEEX or
-		obj->Class == STRING_VALUE or
-		obj->Class == BOOL_VALUE or
-		obj->Class == VECTOR2_VALUE or
-		obj->Class == INT_VALUE or
-		obj->Class == FLOAT_VALUE or
-		obj->Class == OBJECT_VALUE or
-		obj->Class == ADDRESS_VALUE or
-		obj->Class == COLOR_VALUE or
-		obj->Class == FOLDER
-		) {
-		return false;
-	}
-
-	return true;
-}
-
-bool Is2DInheritor(InstanceType type) {
+inline bool Is2DInheritor(InstanceType type) {
 	if (type == INSTANCE or
 		type == LINEEX or
 		type == STRING_VALUE or
@@ -1305,6 +1271,10 @@ bool Is2DInheritor(InstanceType type) {
 	}
 
 	return true;
+}
+
+inline bool Is2DInheritor(Instance* obj) {
+	return Is2DInheritor(obj->Class);
 }
 
 class StringValue : public Instance {
@@ -1652,7 +1622,7 @@ public:
 
 	bool MouseEntered = false;
 
-	void AddEvent(EventType t, InstanceCallback f, MouseButtonType m = NONE);
+	void AddEvent(EventType t, InstanceCallback f, MouseButtonType m = MouseButtonType::MOUSE_NONE);
 
 	void Update() override {
 		if (lastUpdateFrame == framesSinceStart) return;
@@ -2471,18 +2441,6 @@ public:
 				return;
 			}
 
-			ScrollFrame* ancestor = nullptr;
-			Instance* c = findFirstAncestorOfClass(SCROLLFRAME);
-			if (c) ancestor = static_cast<ScrollFrame*>(c);
-			if (ancestor and ancestor->CropDescendants) {
-				if (RealPos.x + RealSize.x + BorderThickness < ancestor->RealPos.x or
-					RealPos.y + RealSize.y + BorderThickness < ancestor->RealPos.y or
-					RealPos.x + BorderThickness > ancestor->RealPos.x + ancestor->RealSize.x or
-					RealPos.y + BorderThickness > ancestor->RealPos.y + ancestor->RealSize.y) {
-					return;
-				}
-			}
-
 			Object2D::Draw();
 
 			bool dirtyCondition = Text.isChanged() or FontFace.isChanged();
@@ -2538,73 +2496,16 @@ public:
 	TextLabel() = delete;
 };
 
-struct KeyMapping {
-	KeyboardKey key;
-	const char* defaultEN;
-	const char* shiftEN;
-	const char* defaultRU;
-	const char* shiftRU;
-};
-
-inline constexpr KeyMapping KeysMapping[49] = { // in future will be replaced by OS API input or file with more languages support
-	{ KEY_ONE,   "1", "!", "1", "!" },
-	{ KEY_TWO,   "2", "@", "2", "\"" },
-	{ KEY_THREE, "3", "#", "3", "№" },
-	{ KEY_FOUR,  "4", "$", "4", ";" },
-	{ KEY_FIVE,  "5", "%", "5", ":" },
-	{ KEY_SIX,   "6", "^", "6", "?" },
-	{ KEY_SEVEN, "7", "&", "7", "?" },
-	{ KEY_EIGHT, "8", "*", "8", "*" },
-	{ KEY_NINE,  "9", "(", "9", "(" },
-	{ KEY_ZERO,  "0", ")", "0", ")" },
-
-	{ KEY_Q, "q", "Q", "й", "Й" },
-	{ KEY_W, "w", "W", "ц", "Ц" },
-	{ KEY_E, "e", "E", "у", "У" },
-	{ KEY_R, "r", "R", "к", "К" },
-	{ KEY_T, "t", "T", "е", "Е" },
-	{ KEY_Y, "y", "Y", "н", "Н" },
-	{ KEY_U, "u", "U", "г", "Г" },
-	{ KEY_I, "i", "I", "ш", "Ш" },
-	{ KEY_O, "o", "O", "щ", "Щ" },
-	{ KEY_P, "p", "P", "з", "З" },
-
-	{ KEY_A, "a", "A", "ф", "Ф" },
-	{ KEY_S, "s", "S", "ы", "Ы" },
-	{ KEY_D, "d", "D", "в", "В" },
-	{ KEY_F, "f", "F", "а", "А" },
-	{ KEY_G, "g", "G", "п", "П" },
-	{ KEY_H, "h", "H", "р", "Р" },
-	{ KEY_J, "j", "J", "о", "О" },
-	{ KEY_K, "k", "K", "л", "Л" },
-	{ KEY_L, "l", "L", "д", "Д" },
-	{ KEY_SEMICOLON, ";", ":", "ж", "Ж" },
-	{ KEY_APOSTROPHE, "'", "\"", "э", "Э" },
-
-	{ KEY_Z, "z", "Z", "я", "Я" },
-	{ KEY_X, "x", "X", "ч", "Ч" },
-	{ KEY_C, "c", "C", "с", "С" },
-	{ KEY_V, "v", "V", "м", "М" },
-	{ KEY_B, "b", "B", "и", "И" },
-	{ KEY_N, "n", "N", "т", "Т" },
-	{ KEY_M, "m", "M", "ь", "Ь" },
-	{ KEY_COMMA, ",", "<", "б", "Б" },
-	{ KEY_PERIOD, ".", ">", "ю", "Ю" },
-	{ KEY_SLASH, "/", "?", ".", "," },
-
-	{ KEY_SPACE, " ", " ", " ", " " },
-	{ KEY_MINUS, "-", "_", "-", "_" },
-	{ KEY_EQUAL, "=", "+", "=", "+" },
-	{ KEY_LEFT_BRACKET, "[", "{", "х", "Х" },
-	{ KEY_RIGHT_BRACKET, "]", "}", "ъ", "Ъ" },
-	{ KEY_BACKSLASH, "\\", "|", "\\", "/" },
-	{ KEY_GRAVE, "`", "~", "ё", "Ё" },
-	//{ KEY_ENTER, "\n", "\n", "\n", "\n"} // WIP
-};
-
 enum TextBoxType {
-	TextResizing = 0,
-	Viewported
+	TEXTBOX_RESIZING = 0,
+	TEXTBOX_VIEWPORTED
+};
+
+enum TextBoxNextLine {
+	TEXTBOX_NEXTLINE_NOT_ALLOWED = 0,
+	TEXTBOX_NEXTLINE_ENTER,
+	TEXTBOX_NEXTLINE_CTRL_ENTER,
+	TEXTBOX_NEXTLINE_SHIFT_ENTER
 };
 
 class TextBox : public Object2D {
@@ -2633,7 +2534,25 @@ class TextBox : public Object2D {
 		charOffsets.push_back(Text.size());
 	}
 
+	std::vector<int> getCharOffsets(const std::string& text) {
+		std::vector<int> c;
+		for (int i = 0; i < text.size();) {
+			c.push_back(i);
+			unsigned char c = text[i];
+			if (c < 0x80) i += 1;
+			else if ((c & 0xE0) == 0xC0) i += 2;
+			else if ((c & 0xF0) == 0xE0) i += 3;
+			else if ((c & 0xF8) == 0xF0) i += 4;
+			else i += 1;
+		}
+		c.push_back(text.size());
+
+		return c;
+	}
+
 	std::vector<int> charOffsets;
+	int lines = 0;
+	Vector2 highlightedIndexes{-1,-1}; // -1 in any slot - text not highlighted
 	Vector3 textParams{};
 	RenderTexture2D cachedText;
 	TextBox* lastFocused = nullptr;
@@ -2642,12 +2561,12 @@ class TextBox : public Object2D {
 	Vector3 lastParams = Vector3{};
 	char lastHideText = '\0';
 	SpecialVector2 lastNewSize{};
-	TextBoxType lastType = TextResizing;
+	TextBoxType lastType = TextBoxType::TEXTBOX_RESIZING;
 	int lastCursorIndex = -1;
 	float viewportPosition = 0;
 
 	void updateTextParams() {
-		if (Type == Viewported) {
+		if (Type == TextBoxType::TEXTBOX_VIEWPORTED) {
 			textParams.y = 0;
 			textParams.x = 0;
 			textParams.z = RealSize.y;
@@ -2659,6 +2578,7 @@ class TextBox : public Object2D {
 			}
 		}
 	}
+
 	void updateTexture() {
 		updateTextParams();
 		lastFocused = FocusedTextBox;
@@ -2694,19 +2614,26 @@ class TextBox : public Object2D {
 		ClearBackground(BLANK);
 
 		if (Text != "") {
+			lines = 1;
+
 			std::string t;
 			if (HideText == '\0') {
-				t = !Text;
+				t = Text;
 			} else {
-				for (int i = 0; i < Text.size(); i++) {
+				for (int i = 0; i < charOffsets.size()-1; i++) {
 					t += HideText;
 				}
 			}
 
-			DrawTextEx(getFont(!FontFace), t.c_str(), { 0,0 }, textParams.z, Spacing, { 255,255,255,255 });
+			for (char c : t) {
+				if (c == '\n') lines++;
+			}
+
+			DrawTextEx(getFont(FontFace), t.c_str(), { 0,0 }, textParams.z, Spacing, { 255,255,255,255 });
 		} else {
+			lines = 0;
 			if (CursorIndex == -1 or FocusedTextBox != this) {
-				DrawTextEx(getFont(!FontFace), PlaceholderText.c_str(), {0,0}, textParams.z, Spacing, {255,255,255,255});
+				DrawTextEx(getFont(FontFace), PlaceholderText.c_str(), {0,0}, textParams.z, Spacing, {255,255,255,255});
 			}
 		}
 
@@ -2723,14 +2650,21 @@ public:
 	Color TextColor = { 0,0,0,255 };
 	TextAnchorEnum TextAnchor = TextAnchorEnum::CENTER;
 	int TextSize = -1;
-	int maxSymbols = 20;
+	int maxSymbols = -1;
 	float TextTransparency = 0;
 	std::string AllowedSymbols = "";
+	std::string DisallowedSymbols = "";
 	int Spacing = defaultSpacing;
 	char HideText = '\0';
 	bool ClearOnClick = true;
+	TextBoxNextLine EnterInputCondition = TextBoxNextLine::TEXTBOX_NEXTLINE_ENTER;
+	bool ClipboardPasteAllowed = true; // Paste not secured from allowed and disallowed symbols
+	bool ClipboardCopyAllowed = true;
+	std::function<bool(const std::string&)> ClipboardPasteCondition;
+	bool TextHighlightAllowed = true;
+	
 	int CursorSize = 3;
-	TextBoxType Type = TextResizing;
+	TextBoxType Type = TextBoxType::TEXTBOX_RESIZING;
 
 	void Draw() override {
 		if (!Visible) return;
@@ -2739,16 +2673,6 @@ public:
 			or RealPos.y + RealSize.y + BorderThickness < 0
 			or RealPos.y - RealSize.y - BorderThickness > winHeight) {
 			return;
-		}
-
-		ScrollFrame* ancestor = nullptr; Instance* c = findFirstAncestorOfClass(SCROLLFRAME); if (c) ancestor = static_cast<ScrollFrame*>(c);
-		if (ancestor and ancestor->CropDescendants) {
-			if (RealPos.x + RealSize.x + BorderThickness < ancestor->RealPos.x or
-				RealPos.y + RealSize.y + BorderThickness < ancestor->RealPos.y or
-				RealPos.x + BorderThickness > ancestor->RealPos.x + ancestor->RealSize.x or
-				RealPos.y + BorderThickness > ancestor->RealPos.y + ancestor->RealSize.y) {
-				return;
-			}
 		}
 
 		Object2D::Draw();
@@ -2776,9 +2700,9 @@ public:
 				updateTexture();
 			}
 
-			SpecialVector2 sizeToDraw = (Type == Viewported) ? RealSize : newSize;
+			SpecialVector2 sizeToDraw = (Type == TextBoxType::TEXTBOX_VIEWPORTED) ? RealSize : newSize;
 
-			Rectangle sourceRec = { (Type == Viewported) ? viewportPosition : 0.0f, (cachedText.texture.height - sizeToDraw.y), sizeToDraw.x, -sizeToDraw.y };
+			Rectangle sourceRec = { (Type == TextBoxType::TEXTBOX_VIEWPORTED) ? viewportPosition : 0.0f, (cachedText.texture.height - sizeToDraw.y), sizeToDraw.x, -sizeToDraw.y };
 			Rectangle destRec = { RealPos.x + textParams.x, RealPos.y + textParams.y, sizeToDraw.x, sizeToDraw.y };
 			SpecialVector2 origin = { 0, 0 };
 
@@ -2795,30 +2719,61 @@ public:
 
 		if (Text == "") {
 			if (CursorVisible and FocusedTextBox == this) {
-				if (textParams.z > 3) {
-					float sizeY = MeasureTextEx(getFont(!FontFace), " ", textParams.z, Spacing).y;
-					DrawLineEx({ RealPos.x + getTextOffset(TextAnchor).x * RealSize.x - ((Type == Viewported) ? viewportPosition : 0), RealPos.y + textParams.y + 2 }, { RealPos.x + getTextOffset(TextAnchor).x * RealSize.x - ((Type == Viewported) ? viewportPosition : 0), RealPos.y + textParams.y + sizeY - 4 }, CursorSize, CursorColor);
+				if (textParams.z > 1) {
+					float sizeY = textParams.z;
+					DrawLineEx(
+						{ RealPos.x + getTextOffset(TextAnchor).x * RealSize.x - ((Type == TextBoxType::TEXTBOX_VIEWPORTED) ? viewportPosition : 0), RealPos.y + textParams.y },
+						{ RealPos.x + getTextOffset(TextAnchor).x * RealSize.x - ((Type == TextBoxType::TEXTBOX_VIEWPORTED) ? viewportPosition : 0), RealPos.y + textParams.y + sizeY },
+						CursorSize, CursorColor
+					);
 				}
 			}
 		}
 
-		if (CursorIndex >= 0 and CursorVisible and Text != "" and textParams.z > 3) {
+		if (CursorIndex >= 0 and CursorVisible and !Text.empty() and textParams.z > 1) {
 			int bytePos = (CursorIndex < (int)charOffsets.size()) ? charOffsets[CursorIndex] : Text.size();
-			std::string textBeforeCursor = Text.substr(0, bytePos);
+
+			int startIndex = CursorIndex;
+			while (startIndex > 0 and charOffsets.size() >= startIndex and Text[charOffsets[startIndex - 1]] != '\n') {
+				startIndex--;
+			}
+
+			int start = (startIndex < (int)charOffsets.size()) ? charOffsets[startIndex] : Text.size();
+
+			std::string textBeforeCursorOnThisLine = Text.substr(start, bytePos - start);
+
 			if (HideText != '\0') {
-				textBeforeCursor = "";
-				for (int i = 0; i < bytePos; i++) {
-					textBeforeCursor += HideText;
+				textBeforeCursorOnThisLine = "";
+				for (int i = startIndex; i < CursorIndex; i++) {
+					textBeforeCursorOnThisLine += HideText;
 				}
 			}
 
-			SpecialVector2 size = MeasureTextEx(getFont(!FontFace), textBeforeCursor.c_str(), textParams.z, Spacing);
-
-			if (size.x == 0 and size.y == 0) {
-				size.y = MeasureTextEx(getFont(!FontFace), "a", textParams.z, Spacing).y;
+			int currentLine = 0;
+			for (int i = 0; i < CursorIndex; i++) {
+				if (Text[charOffsets[i]] == '\n') currentLine++;
 			}
 
-			DrawLineEx({ RealPos.x + textParams.x + size.x + 2 - ((Type == Viewported) ? viewportPosition : 0), RealPos.y + textParams.y + 2 }, { RealPos.x + textParams.x + size.x + 2 - ((Type == Viewported) ? viewportPosition : 0), RealPos.y + textParams.y + size.y - 4 }, CursorSize, CursorColor);
+			SpecialVector2 size = MeasureTextEx(getFont(!FontFace), textBeforeCursorOnThisLine.c_str(), textParams.z, Spacing);
+
+			if (size.x == 0 or size.y == 0) {
+				size.y = MeasureTextEx(getFont(!FontFace), "A", textParams.z, Spacing).y;
+				if (size.y == 0) size.y = textParams.z;
+			}
+
+			float yOffset = 0.0f;
+			if (currentLine > 0) {
+				std::string newlinesStr(currentLine, '\n');
+				float totalH = MeasureTextEx(getFont(!FontFace), newlinesStr.c_str(), textParams.z, Spacing).y;
+				float singleH = MeasureTextEx(getFont(!FontFace), "A", textParams.z, Spacing).y;
+				yOffset = totalH - singleH;
+			}
+
+			DrawLineEx(
+				{ RealPos.x + textParams.x + size.x + 2 - ((Type == TextBoxType::TEXTBOX_VIEWPORTED) ? viewportPosition : 0), RealPos.y + textParams.y + yOffset },
+				{ RealPos.x + textParams.x + size.x + 2 - ((Type == TextBoxType::TEXTBOX_VIEWPORTED) ? viewportPosition : 0), RealPos.y + textParams.y + yOffset + size.y },
+				CursorSize, CursorColor
+			);
 		}
 	}
 
@@ -2842,22 +2797,19 @@ public:
 			if (higherObject != this and higherObject) {
 				if (higherObject->Class == TEXTBOX) {
 					FocusedTextBox = static_cast<TextBox*>(higherObject);
-				}
-				else {
+				} else {
 					FocusedTextBox = nullptr;
 				}
-			}
-			else if (not higherObject) {
+			} else if (not higherObject) {
 				FocusedTextBox = nullptr;
-			}
-			else if (pointInObject(mousePosition) and higherObject == this) {
+			} else if (pointInObject(mousePosition) and higherObject == this) {
 				CursorTime = 0.0f;
 				CursorVisible = true;
 				FocusedTextBox = this;
 
 				std::string text = "";
 				if (HideText != '\0') {
-					for (int i = 0; i < Text.size(); i++) {
+					for (int i = 0; i < charOffsets.size(); i++) {
 						text += HideText;
 					}
 				}
@@ -2871,28 +2823,57 @@ public:
 					for (int i = 0; i < Text.size(); i++) {
 						textBeforeCursor += HideText;
 					}
-				}
-				else {
+				} else {
 					textBeforeCursor = !Text;
 				}
 
 				float textStartX = RealPos.x + textParams.x;
-				float clickX = mousePosition.x - textStartX + ((Type == Viewported) ? viewportPosition : 0.0f);
+				float textStartY = RealPos.y + textParams.y;
+				float clickX = mousePosition.x - textStartX + ((Type == TextBoxType::TEXTBOX_VIEWPORTED) ? viewportPosition : 0.0f);
+				float clickY = mousePosition.y - textStartY + ((Type == TextBoxType::TEXTBOX_VIEWPORTED) ? viewportPosition : 0.0f);
+			    
+				int currentLine = clickY / textParams.z + 1;
 
 				CursorIndex = 0;
-				if (!text.empty()) {
-					for (int i = 1; i < charOffsets.size(); i++) {
-						float widthPrev = MeasureTextEx(getFont(!FontFace), text.substr(0, charOffsets[i - 1]).c_str(), textParams.z, Spacing).x;
-						float widthCurr = MeasureTextEx(getFont(!FontFace), text.substr(0, charOffsets[i]).c_str(), textParams.z, Spacing).x;
-						if (clickX < (widthPrev + widthCurr) / 2.0f) {
-							CursorIndex = i - 1;
+
+				if (!Text.empty() and !charOffsets.empty()) {
+					int startIdx = 0;
+					int currentL = 1;
+
+					for (int i = 0; i < (int)charOffsets.size(); i++) {
+						if (currentL == currentLine) {
+							startIdx = i;
 							break;
 						}
-						CursorIndex = i;
+						if (Text[charOffsets[i]] == '\n') {
+							currentL++;
+						}
 					}
-				}
-				else {
-					CursorIndex = 0;
+
+					if (currentL == currentLine) {
+						int endIdx = startIdx;
+						while (endIdx < (int)charOffsets.size() and Text[charOffsets[endIdx]] != '\n' and Text[charOffsets[endIdx]] != '\0') {
+							endIdx++;
+						}
+
+						int byteStart = charOffsets[startIdx];
+						int byteEnd = (endIdx < (int)charOffsets.size()) ? charOffsets[endIdx] : Text.size();
+
+						CursorIndex = endIdx;
+
+						for (int i = startIdx; i <= endIdx; i++) {
+							int currentByte = (i < (int)charOffsets.size()) ? charOffsets[i] : Text.size();
+							float widthCurr = MeasureTextEx(getFont(!FontFace), Text.substr(byteStart, currentByte - byteStart).c_str(), textParams.z, Spacing).x;
+
+							int prevByte = (i > startIdx) ? charOffsets[i - 1] : byteStart;
+							float widthPrev = (i > startIdx) ? MeasureTextEx(getFont(!FontFace), Text.substr(byteStart, prevByte - byteStart).c_str(), textParams.z, Spacing).x : 0.0f;
+
+							if (clickX < (widthPrev + widthCurr) / 2.0) {
+								CursorIndex = (i > startIdx) ? i - 1 : startIdx;
+								break;
+							}
+						}
+					}
 				}
 			}
 		}
@@ -2900,44 +2881,44 @@ public:
 		// KEYBOARD INPUT
 
 		if (FocusedTextBox == this and Visible) {
-			if (maxSymbols >= charOffsets.size()) {
-				const char* layout = getLayout();
-				int index = (!strcmp(layout, "RU")) ? 2 : 0;
-				if (IsKeyDown(KEY_LEFT_SHIFT) or capsLock()) index += 1;
-				for (auto& key : KeysMapping) {
-					if (maxSymbols < charOffsets.size()) break;
-					if (IsKeyPressed(key.key)) {
-						const char* keyValue = nullptr;
-						switch (index) {
-						case 0: keyValue = key.defaultEN; break;
-						case 1: keyValue = key.shiftEN; break;
-						case 2: keyValue = key.defaultRU; break;
-						case 3: keyValue = key.shiftRU; break;
-						default: keyValue = key.defaultEN;
-						}
+			if (maxSymbols >= charOffsets.size() or maxSymbols < 0) {
+				int symbolsLeft = maxSymbols - static_cast<int>(charOffsets.size());
+				int addedSymbols = 0;
+				std::string buf;
 
-						if (AllowedSymbols != "") {
-							bool allowed = false;
-							for (char c : AllowedSymbols) {
-								if (c == *keyValue) {
-									allowed = true;
-									break;
-								}
+				int key = GetCharPressed();
+				while (key > 0) {
+					if (symbolsLeft > 0 or maxSymbols < 0) {
+						int bytes = 0;
+						const char* utf8 = CodepointToUTF8(key, &bytes);
+						if (utf8 and bytes > 0) {
+							std::string_view utf8View(utf8, bytes);
+
+							bool allowed = (AllowedSymbols.size() ? AllowedSymbols.find(utf8View) != std::string::npos : true);
+							bool disallowed = (DisallowedSymbols.size() ? DisallowedSymbols.find(utf8View) != std::string::npos : false);
+
+							if (allowed and not disallowed) {
+								symbolsLeft--;
+								addedSymbols++;
+								buf.append(utf8, bytes);
 							}
-							if (!allowed) continue;
 						}
-						updateCharOffsets();
-						int bytePos = (CursorIndex < (int)charOffsets.size()) ? charOffsets[CursorIndex] : Text.size();
-						Text = Text.substr(0, bytePos) + std::string(keyValue) + Text.substr(bytePos);
-						CursorIndex += 1;
-						updateCharOffsets();
-						CursorVisible = true; CursorTime = 0.0f;
 					}
+					key = GetCharPressed();
+				}
+
+				if (addedSymbols > 0) {
+					updateCharOffsets();
+					int bytePos = (CursorIndex < (int)charOffsets.size()) ? charOffsets[CursorIndex] : Text.size();
+					Text = Text.substr(0, bytePos) + buf + Text.substr(bytePos);
+					CursorIndex += addedSymbols;
+					updateCharOffsets();
+					CursorVisible = true; CursorTime = 0.0f;
 				}
 			}
 		}
 
-		// UTILS (BACKSPACE | DEL | CTRL BACKSPACE | ARROWS)
+		// UTILS (BACKSPACE | DEL | CTRL BACKSPACE | ARROWS | CLIPBOARD | ENTER)
 		if (FocusedTextBox == this and Visible) {
 			if (IsKeyPressed(KEY_BACKSPACE)) {
 				if (IsKeyDown(KEY_LEFT_CONTROL)) {
@@ -2958,7 +2939,7 @@ public:
 							if (c == '.' or c == ',' or c == ':' or
 								c == ';' or c == '?' or c == '!' or
 								c == '/' or c == '\\' or c == '\'' or
-								c == '\"') {
+								c == '\"' or c == '\n') {
 								start--;
 							}
 							else {
@@ -2968,7 +2949,7 @@ public:
 									if (c == ' ' or c == '.' or c == ',' or
 										c == ':' or c == ';' or c == '?' or
 										c == '!' or c == '/' or c == '\\' or
-										c == '\'' or c == '\"')
+										c == '\'' or c == '\"' or c == '\n')
 									{
 										break;
 									}
@@ -2996,14 +2977,14 @@ public:
 				CursorVisible = true;
 				CursorTime = 0.0f;
 			}
-
+		   
 			if (IsKeyPressed(KEY_DELETE)) {
 				if (CursorIndex < (int)charOffsets.size() - 1) {
 					Text = Text.substr(0, charOffsets[CursorIndex]) + Text.substr(charOffsets[CursorIndex + 1]);
 
 					updateCharOffsets();
 				}
-
+			    
 				CursorVisible = true;
 				CursorTime = 0.0f;
 			}
@@ -3060,8 +3041,7 @@ public:
 
 						CursorIndex++;
 					}
-				}
-				else {
+				} else {
 					CursorIndex++;
 				}
 
@@ -3070,6 +3050,51 @@ public:
 
 				CursorVisible = true;
 				CursorTime = 0.0f;
+			}
+
+			if (IsKeyDown(KEY_LEFT_CONTROL) and IsKeyPressed(KEY_V) and ClipboardPasteAllowed) {
+				std::string clipboardText = GetClipboardText();
+				int symbolsLeft = maxSymbols - static_cast<int>(charOffsets.size());
+
+				if (symbolsLeft > 0 or maxSymbols < 0) {
+					std::string toPaste = clipboardText; // СДЕЛАТЬ ОГРАНИЧЕНИЕ ПО maxSymbols
+				    
+					bool allowed = true;
+					if (ClipboardPasteCondition and !ClipboardPasteCondition(toPaste)) allowed = false;
+
+					if (allowed) {
+						updateCharOffsets();
+						int bytePos = (CursorIndex < (int)charOffsets.size()) ? charOffsets[CursorIndex] : Text.size();
+						Text = Text.substr(0, bytePos) + toPaste + Text.substr(bytePos);
+						CursorIndex += getCharOffsets(toPaste).size() - 1;
+						updateCharOffsets();
+						CursorVisible = true; CursorTime = 0.0f;
+					}
+				}
+			}
+
+			if (EnterInputCondition != TextBoxNextLine::TEXTBOX_NEXTLINE_NOT_ALLOWED and (maxSymbols < charOffsets.size() or maxSymbols < 0)) {
+				bool enter = IsKeyPressed(KEY_ENTER);
+
+				if (enter) {
+					bool ctrl = IsKeyDown(KEY_LEFT_CONTROL);
+					bool shift = IsKeyDown(KEY_LEFT_SHIFT);
+
+					bool allowed = false;
+
+					if (EnterInputCondition == TextBoxNextLine::TEXTBOX_NEXTLINE_ENTER) allowed = true;
+					if (EnterInputCondition == TextBoxNextLine::TEXTBOX_NEXTLINE_CTRL_ENTER and ctrl) allowed = true;
+					if (EnterInputCondition == TextBoxNextLine::TEXTBOX_NEXTLINE_SHIFT_ENTER and shift) allowed = true;
+
+					if (allowed) {
+						updateCharOffsets();
+						int bytePos = (CursorIndex < (int)charOffsets.size()) ? charOffsets[CursorIndex] : Text.size();
+						Text = Text.substr(0, bytePos) + '\n' + Text.substr(bytePos);
+						CursorIndex += 1;
+						updateCharOffsets();
+						CursorVisible = true; CursorTime = 0.0f;
+					}
+				}
 			}
 		}
 	}
@@ -3085,7 +3110,6 @@ public:
 		getRealObject2Dposition();
 
 		inputHandler();
-
 		eventHandler();
 
 		SameUpdate();
@@ -3094,14 +3118,13 @@ public:
 			updateChildren(this);
 		}
 
-		if (Type == Viewported) {
+		if (Type == TextBoxType::TEXTBOX_VIEWPORTED) {
 			if (lastCursorIndex != CursorIndex) {
 				lastCursorIndex = CursorIndex;
 
 				if (Text.empty() or CursorIndex == -1) {
 					viewportPosition = 0.0f;
-				}
-				else {
+				} else {
 					std::string textBeforeCursor = Text.substr(0, charOffsets[CursorIndex]);
 					SpecialVector2 textSize = MeasureTextEx(getFont(!FontFace), textBeforeCursor.c_str(), textParams.z, Spacing);
 
@@ -3109,8 +3132,7 @@ public:
 
 					if (currentX - viewportPosition >= RealSize.x) {
 						viewportPosition = currentX - RealSize.x;
-					}
-					else if (currentX < viewportPosition) {
+					} else if (currentX < viewportPosition) {
 						viewportPosition = currentX;
 					}
 
@@ -3193,9 +3215,9 @@ public:
 };
 
 enum ImageOverlayFormat {
-	STRETCH = 0, // STRETCH ON FULL SIZE
-	FIT = 1, // FIT WITH ASPECT SAVING
-	CROP = 2, // CUT EXCESS
+	IMAGE_STRETCH = 0, // STRETCH ON FULL SIZE
+	IMAGE_FIT, // FIT WITH ASPECT SAVING
+	IMAGE_CROP, // CUT EXCESS
 };
 
 class ImageLabel : public Object2D {
@@ -3225,7 +3247,7 @@ class ImageLabel : public Object2D {
 	
 	*/
 public:
-	ImageOverlayFormat Overlay = FIT;
+	ImageOverlayFormat Overlay = ImageOverlayFormat::IMAGE_FIT;
 	float ImageTransparency = 0.0f;
 	Color ImageColor = { 255,255,255,255 };
 	bool RoundImage = false;
@@ -3258,7 +3280,7 @@ public:
 			Rectangle destRec = { RealPos.x + Origin.x, RealPos.y + Origin.y, RealSize.x, RealSize.y };
 			Rectangle srcRec = { 0, 0, tex.width, tex.height };
 
-			if (Overlay == FIT) {
+			if (Overlay == ImageOverlayFormat::IMAGE_FIT) {
 				float imageAspect = (float)tex.width / tex.height;
 				float rectAspect = RealSize.x / RealSize.y;
 
@@ -3271,7 +3293,7 @@ public:
 					destRec.x += (RealSize.x - scaledWidth) / 2.0f;
 					destRec.width = scaledWidth;
 				}
-			} else if (Overlay == CROP) {
+			} else if (Overlay == ImageOverlayFormat::IMAGE_CROP) {
 				float imageAspect = (float)tex.width / tex.height;
 				float rectAspect = RealSize.x / RealSize.y;
 
@@ -3497,7 +3519,7 @@ inline void Object2D::AddEvent(EventType t, InstanceCallback f, MouseButtonType 
 	}
 }
 
-inline void Instance::AddEvent(EventType t, InstanceCallback f, MouseButtonType m = NONE) {
+inline void Instance::AddEvent(EventType t, InstanceCallback f, MouseButtonType m = MouseButtonType::MOUSE_NONE) {
 	events.push_back({ t, f });
 
 	Instance* asc = findFirstAncestorOfClass(SCROLLFRAME);
@@ -3561,36 +3583,36 @@ inline void Object2D::eventHandler() {
 				break;
 			} case MOUSE_HOLD_START: {
 				if (IsMouseButtonPressed(mouse) and mouseOnObject and higherObject == this) {
-					if (mouse == LEFT) {
+					if (mouse == MOUSE_LEFT) {
 						startedOnObject1 = true;
 					}
-					else if (mouse == RIGHT) {
+					else if (mouse == MOUSE_RIGHT) {
 						startedOnObject2 = true;
 					}
-					else if (mouse == MIDDLE) {
+					else if (mouse == MOUSE_MIDDLE) {
 						startedOnObject3 = true;
 					}
 					func(this);
 				}
 
-				if (mouse == LEFT) {
+				if (mouse == MOUSE_LEFT) {
 					hasStartHold1 = true;
 				}
-				else if (mouse == RIGHT) {
+				else if (mouse == MOUSE_RIGHT) {
 					hasStartHold2 = true;
 				}
-				else if (mouse == MIDDLE) {
+				else if (mouse == MOUSE_MIDDLE) {
 					hasStartHold3 = true;
 				}
 
 				break;
 			} case MOUSE_HOLD_END: {
 				if (IsMouseButtonReleased(mouse)) {
-					if (mouse == LEFT) {
+					if (mouse == MOUSE_LEFT) {
 						mouseReleased1 = func;
-					} else if (mouse == RIGHT) {
+					} else if (mouse == MOUSE_RIGHT) {
 						mouseReleased2 = func;
-					} else if (mouse == MIDDLE) {
+					} else if (mouse == MOUSE_MIDDLE) {
 						mouseReleased3 = func;
 					}
 				}
@@ -3622,15 +3644,15 @@ inline void Object2D::eventHandler() {
 		}
 	}
 
-	if (not hasStartHold1 and IsMouseButtonPressed(LEFT) and mouseOnObject and higherObject == this) {
+	if (not hasStartHold1 and IsMouseButtonPressed(MOUSE_LEFT) and mouseOnObject and higherObject == this) {
 		startedOnObject1 = true;
 	}
 
-	if (not hasStartHold2 and IsMouseButtonPressed(RIGHT) and mouseOnObject and higherObject == this) {
+	if (not hasStartHold2 and IsMouseButtonPressed(MOUSE_RIGHT) and mouseOnObject and higherObject == this) {
 		startedOnObject2 = true;
 	}
 
-	if (not hasStartHold3 and IsMouseButtonPressed(MIDDLE) and mouseOnObject and higherObject == this) {
+	if (not hasStartHold3 and IsMouseButtonPressed(MOUSE_MIDDLE) and mouseOnObject and higherObject == this) {
 		startedOnObject3 = true;
 	}
 
@@ -3644,13 +3666,13 @@ inline void Object2D::eventHandler() {
 		mouseReleased3(this);
 	}
 
-	if (IsMouseButtonReleased(LEFT)) {
+	if (IsMouseButtonReleased(MOUSE_LEFT)) {
 		startedOnObject1 = false;
 	}
-	if (IsMouseButtonReleased(RIGHT)) {
+	if (IsMouseButtonReleased(MOUSE_RIGHT)) {
 		startedOnObject2 = false;
 	}
-	if (IsMouseButtonReleased(MIDDLE)) {
+	if (IsMouseButtonReleased(MOUSE_MIDDLE)) {
 		startedOnObject3 = false;
 	}
 }
@@ -3852,7 +3874,7 @@ inline namespace debug {
 		AnimButton->SetFont(DEBUG_MENU_FONT_NAME);
 		AnimButton->Name = "animButton";
 		AnimButton->Active = true;
-		AnimButton->AddEvent(MOUSE_CLICK, [](Instance* t) {Animations = !Animations; }, LEFT);
+		AnimButton->AddEvent(MOUSE_CLICK, [](Instance* t) {Animations = !Animations; }, MOUSE_LEFT);
 		AnimButton->Roundness = 0.3;
 
 		TextLabel* LGMlabel = new TextLabel(SettingsFrame);
@@ -3877,7 +3899,7 @@ inline namespace debug {
 		LGMbutton->SetFont(DEBUG_MENU_FONT_NAME);
 		LGMbutton->Name = "LGMbutton";
 		LGMbutton->Active = true;
-		LGMbutton->AddEvent(MOUSE_CLICK, [](Instance* t) {lowGraphicsMode = !lowGraphicsMode; }, LEFT);
+		LGMbutton->AddEvent(MOUSE_CLICK, [](Instance* t) {lowGraphicsMode = !lowGraphicsMode; }, MOUSE_LEFT);
 		LGMbutton->Roundness = 0.3;
 
 		TextLabel* FPSlabel = new TextLabel(SettingsFrame);
@@ -3908,7 +3930,7 @@ inline namespace debug {
 		FPSleft->SetFont(DEBUG_MENU_FONT_NAME);
 		FPSleft->Name = "FPSleft";
 		FPSleft->Active = true;
-		FPSleft->AddEvent(MOUSE_CLICK, [](Instance* t) { currentFPSindex--; currentFPSindex += 4; currentFPSindex = currentFPSindex % 4; }, LEFT);
+		FPSleft->AddEvent(MOUSE_CLICK, [](Instance* t) { currentFPSindex--; currentFPSindex += 4; currentFPSindex = currentFPSindex % 4; }, MOUSE_LEFT);
 		TextLabel* FPSquantity = new TextLabel(FPSframe);
 		FPSquantity->Size = SpecialVector2{ 0.5, 1 };
 		FPSquantity->BackgroundTransparency = 1;
@@ -3930,7 +3952,7 @@ inline namespace debug {
 		FPSright->SetFont(DEBUG_MENU_FONT_NAME);
 		FPSright->Name = "FPSright";
 		FPSright->Active = true;
-		FPSright->AddEvent(MOUSE_CLICK, [](Instance* t) { currentFPSindex++; currentFPSindex += 4; currentFPSindex = currentFPSindex % 4; }, LEFT);
+		FPSright->AddEvent(MOUSE_CLICK, [](Instance* t) { currentFPSindex++; currentFPSindex += 4; currentFPSindex = currentFPSindex % 4; }, MOUSE_LEFT);
 
 		TextLabel* Colorlabel = new TextLabel(SettingsFrame);
 		Colorlabel->Size = SpecialVector2{ 0.65, 0.2 };
@@ -3960,7 +3982,7 @@ inline namespace debug {
 		Colorleft->SetFont(DEBUG_MENU_FONT_NAME);
 		Colorleft->Name = "Colorleft";
 		Colorleft->Active = true;
-		Colorleft->AddEvent(MOUSE_CLICK, [](Instance* t) { currentColor--; currentColor += 9; currentColor = currentColor % 9; }, LEFT);
+		Colorleft->AddEvent(MOUSE_CLICK, [](Instance* t) { currentColor--; currentColor += 9; currentColor = currentColor % 9; }, MOUSE_LEFT);
 		Object2D* ColorBlock = new TextLabel(Colorframe);
 		ColorBlock->Size = SpecialVector2{ 0.5, 0.8 };
 		ColorBlock->BackgroundColor = DefaultDebugColor;
@@ -3978,7 +4000,7 @@ inline namespace debug {
 		Colorright->SetFont(DEBUG_MENU_FONT_NAME);
 		Colorright->Name = "Colorright";
 		Colorright->Active = true;
-		Colorright->AddEvent(MOUSE_CLICK, [](Instance* t) { currentColor++; currentColor += 9; currentColor = currentColor % 9; }, LEFT);
+		Colorright->AddEvent(MOUSE_CLICK, [](Instance* t) { currentColor++; currentColor += 9; currentColor = currentColor % 9; }, MOUSE_LEFT);
 
 		/******************
 		*       logs      *
@@ -4165,7 +4187,7 @@ inline namespace debug {
 						element2->SetText(">");
 					}
 
-					element->AddEvent(MOUSE_CLICK, [i](Instance* t) { currentInstance = objects[i]; }, LEFT);
+					element->AddEvent(MOUSE_CLICK, [i](Instance* t) { currentInstance = objects[i]; }, MOUSE_LEFT);
 				}
 
 				way->CanvasSize.x = objects.size() * 0.25 - 0.05;
@@ -4189,7 +4211,7 @@ inline namespace debug {
 					element->SetText(pupupupu.str());
 					element->Active = true;
 					element->TextAnchor = TextAnchorEnum::W;
-					element->AddEvent(MOUSE_CLICK, [i, dec](Instance* t) { currentInstance = objects2[i - dec]; }, LEFT);
+					element->AddEvent(MOUSE_CLICK, [i, dec](Instance* t) { currentInstance = objects2[i - dec]; }, MOUSE_LEFT);
 				}
 
 				treeScroll->CanvasSize.y = (currentInstance->Children.size() - dec) * 0.05;
@@ -4342,7 +4364,7 @@ void UpdateHigher(Instance* StartInstance) {
 	higherObject = best;
 }
 
-void start(Instance& StartInstance, Vector3 inf, const char* name, const char* iconName = "", unsigned int flags = 4) {
+void start(Instance& StartInstance, Vector3 inf, const char* name, const char* iconName = "", unsigned int flags = FLAG_WINDOW_RESIZABLE + FLAG_MSAA_4X_HINT) {
 	SetConfigFlags(flags);
 	SetTraceLogLevel(LOG_NONE);
 
@@ -4441,3 +4463,7 @@ void start(Instance& StartInstance, Vector3 inf, const char* name, const char* i
 
 	CloseWindow();
 }
+
+#ifndef EXCLUDE_SIMPLEUI_EXTENSION
+#include "../include/SUIextension.h"
+#endif
