@@ -30,8 +30,22 @@ class GraphBuilder : public Object2D {
 	};
 
 	size_t seqID = 0;
+
 	RenderTexture2D cachedTexture{};
 	Vector2 textureSize{};
+
+	RenderTexture2D cachedMin{};
+	Vector2 textureSizeMin{};
+	std::string strMin;
+	Vector3 textParamsMin;
+
+	RenderTexture2D cachedMax{};
+	Vector2 textureSizeMax{};
+	std::string strMax;
+	Vector3 textParamsMax;
+
+	int ScaleSizeOfY = 4;
+
 	std::unordered_map<size_t, GraphSequence*> sequences;
 	bool GraphDirty = false;
 
@@ -50,30 +64,46 @@ class GraphBuilder : public Object2D {
 			BeginTextureMode(cachedTexture);
 			ClearBackground(BLANK);
 			
+			size_t gsize = 0;
+			for (auto [id, seq] : sequences) {
+				if (gsize < seq->sequence.size()) gsize = seq->sequence.size();
+			}
+
 			for (auto [id, seq] : sequences) {
 				if (seq->sequence.size() < 2) continue;
 				if (seq->id != ColumnarDisplayID and GraphType == GraphDisplayType::GRAPH_COLUMNAR) continue;
 
-				long double min = seq->smallest;
-				long double max = seq->biggest;
+				long double gmin = minimalGraphValue;
+				long double gmax = maximalGraphValue;
+				long double lmin = seq->smallest;
+				long double lmax = seq->biggest;
+
+				size_t lsize = seq->sequence.size();
+				size_t gsizel = gsize;
+
+				if (IndependentValuesY) { gmax = lmax; gmin = lmin; }
+				if (IndependentValuesX) { gsizel = lsize; }
+
+				float xAspect = (float)lsize / (float)gsizel;
+
 				for (size_t i = (GraphType == GraphDisplayType::GRAPH_COLUMNAR ? 0 : 1); i < seq->sequence.size(); i++) {
 					if (GraphType == GraphDisplayType::GRAPH_LINEAR) {
 						long double current = seq->sequence[i];
 						long double prev = seq->sequence[i - 1];
 
 						Vector2 start = {
-							GraphRealPos.x + GraphRealSize.x * ((float)(i - 1) / (seq->sequence.size() - 1)),
-							GraphRealPos.y + GraphRealSize.y * (1 - (prev - min) / (max - min))
+							(GraphRealPos.x + GraphRealSize.x * ((float)(i - 1) / (seq->sequence.size() - 1))) * xAspect,
+							GraphRealPos.y + GraphRealSize.y * (1 - (prev - gmin) / (gmax - gmin))
 						};
 						Vector2 end = {
-							GraphRealPos.x + GraphRealSize.x * ((float)(i) / (seq->sequence.size() - 1)),
-							GraphRealPos.y + GraphRealSize.y * (1 - (current - min) / (max - min))
+							(GraphRealPos.x + GraphRealSize.x * ((float)(i) / (seq->sequence.size() - 1))) * xAspect,
+							GraphRealPos.y + GraphRealSize.y * (1 - (current - gmin) / (gmax - gmin))
 						};
 
 						DrawLineEx(start, end, seq->thickness, seq->color);
 					} else if (GraphType == GraphDisplayType::GRAPH_COLUMNAR) {
 						long double current = seq->sequence[i];
-						float height = GraphRealSize.y * ((current - min) / (max - min)); if (height <= 0) height = 1;
+						float height = GraphRealSize.y * ((current - lmin) / (lmax - lmin)); if (height <= 0) height = 1;
 						float sizeAfterSpacingX = (GraphRealSize.x - (seq->sequence.size() - 1) * Spacing) / seq->sequence.size();
 
 						if (sizeAfterSpacingX <= 0) continue;
@@ -95,11 +125,103 @@ class GraphBuilder : public Object2D {
 		}
 	}
 
+	void updateMinTexture(bool load = false) {
+		Vector2 leftSize = { SizeOfLeftInfo.Offset + SizeOfLeftInfo.Scale * RealSize.x, RealSize.y / ScaleSizeOfY };
+		strMin = textFilterMin(minimalGraphValue);
+		textParamsMin = getTextCFrame(strMin.c_str(), getFont(FontFace), { 0,0, leftSize.x, leftSize.y }, TextAnchorEnum::SE, -1, 0);
+		textureSizeMin = { leftSize.x - textParamsMin.x, leftSize.y - textParamsMin.y };
+
+		if (load) {
+			if (cachedMin.id) UnloadRenderTexture(cachedMin);
+			cachedMin = LoadRenderTexture(textureSizeMin.x * textureAspect, textureSizeMin.y * textureAspect);
+			SetTextureFilter(cachedMin.texture, TEXTURE_FILTER_TRILINEAR);
+		}
+
+		if (cachedMin.id) {
+			bool hadClip = !clipStack.empty();
+			Clip current;
+			if (hadClip) current = clipStack.back();
+
+			if (hadClip) EndScissorMode();
+
+			BeginTextureMode(cachedMin);
+			ClearBackground(BLANK);
+
+			DrawTextEx(getFont(FontFace), strMin.c_str(), { 0,0 }, textParamsMin.z, 0, { 255,255,255,255 });
+
+			EndTextureMode();
+
+			if (hadClip) BeginScissorMode(current.x, current.y, current.w, current.h);
+		}
+	}
+
+	void updateMaxTexture(bool load = false) {
+		Vector2 leftSize = { SizeOfLeftInfo.Offset + SizeOfLeftInfo.Scale * RealSize.x, RealSize.y / ScaleSizeOfY };
+		strMax = textFilterMax(maximalGraphValue);
+		textParamsMax = getTextCFrame(strMax.c_str(), getFont(FontFace), { 0,0, leftSize.x, leftSize.y }, TextAnchorEnum::SE, -1, 0);
+		textureSizeMax = { leftSize.x - textParamsMax.x, leftSize.y - textParamsMax.y };
+
+		if (load) {
+			if (cachedMax.id) UnloadRenderTexture(cachedMax);
+			cachedMax = LoadRenderTexture(textureSizeMax.x * textureAspect, textureSizeMax.y * textureAspect);
+			SetTextureFilter(cachedMax.texture, TEXTURE_FILTER_TRILINEAR);
+		}
+
+		if (cachedMax.id) {
+			bool hadClip = !clipStack.empty();
+			Clip current;
+			if (hadClip) current = clipStack.back();
+
+			if (hadClip) EndScissorMode();
+
+			BeginTextureMode(cachedMax);
+			ClearBackground(BLANK);
+
+			DrawTextEx(getFont(FontFace), strMax.c_str(), { 0,0 }, textParamsMax.z, 0, { 255,255,255,255 });
+
+			EndTextureMode();
+
+			if (hadClip) BeginScissorMode(current.x, current.y, current.w, current.h);
+		}
+	}
+
 	int lS = 0;
 	float lR = 0;
 	size_t lC = 0;
 	GraphDisplayType lG = GraphDisplayType::GRAPH_LINEAR;
 	bool lSMM = false;
+	bool lIX = false;
+	bool lIY = false;
+	OffsetScale lastLeft = { 0,0 };
+	long double lastMin = 999999999;
+	long double lastMax = -999999999;
+
+	long double minimalGraphValue = 999999999;
+	long double maximalGraphValue = -999999999;
+
+	std::function<std::string(long double)> textFilterMin = [](long double v) { return std::to_string(v); };
+	std::function<std::string(long double)> textFilterMax = [](long double v) { return std::to_string(v); };
+
+	void updateGlobalMinMax() {
+		long double mi = 999999999;
+		long double ma = -999999999;
+
+		if (GraphType == GraphDisplayType::GRAPH_LINEAR) {
+			for (auto& sec : sequences) {
+				if (sec.second->biggest > ma) ma = sec.second->biggest;
+				if (sec.second->smallest < mi) mi = sec.second->smallest;
+			}
+		} else if (GraphType == GraphDisplayType::GRAPH_COLUMNAR) {
+			auto it = sequences.find(ColumnarDisplayID);
+			if (it != sequences.end()) {
+				if (it->second->biggest > ma) ma = it->second->biggest;
+				if (it->second->smallest < mi) mi = it->second->smallest;
+			} else return;
+		}
+
+		minimalGraphValue = mi;
+		maximalGraphValue = ma;
+	}
 public:
 	void setSequenceColor(size_t id, Color c) {
 		auto it = sequences.find(id);
@@ -142,6 +264,9 @@ public:
 
 				if (value > seq->biggest) seq->biggest = value;
 				if (value < seq->smallest) seq->smallest = value;
+
+				if (value > maximalGraphValue) maximalGraphValue = value;
+				if (value < minimalGraphValue) minimalGraphValue = value;
 			}
 		}
 	}
@@ -199,6 +324,42 @@ public:
 		}
 	}
 
+	long double getMaxValue(size_t seqID) {
+		auto it = sequences.find(seqID);
+		if (it != sequences.end()) {
+			return it->second->biggest;
+		}
+
+		return 0;
+	}
+
+	long double getMinValue(size_t seqID) {
+		auto it = sequences.find(seqID);
+		if (it != sequences.end()) {
+			return it->second->smallest;
+		}
+
+		return 0;
+	}
+
+	Color getColor(size_t seqID) {
+		auto it = sequences.find(seqID);
+		if (it != sequences.end()) {
+			return it->second->color;
+		}
+
+		return { 255,255,255,255 };
+	}
+
+	int getThickness(size_t seqID) {
+		auto it = sequences.find(seqID);
+		if (it != sequences.end()) {
+			return it->second->thickness;
+		}
+
+		return 0;
+	}
+
 	std::vector<long double> getSequenceValues(size_t id) const {
 		auto it = sequences.find(id);
 		if (it != sequences.end()) {
@@ -208,11 +369,25 @@ public:
 		return {};
 	}
 
+	void minimalValueToTextFunction(std::function<std::string(long double)> f) {
+		textFilterMin = f;
+	}
+
+	void maximalValueToTextFunction(std::function<std::string(long double)> f) {
+		textFilterMax = f;
+	}
+
 	GraphDisplayType GraphType = GraphDisplayType::GRAPH_LINEAR;
 	int Spacing = 0; // Spacing between rectangles in GRAPH_COLUMNAR graph
 	float Roundness = 0; // Roundness of rectangles in GRAPH_COLUMNAR graph (0-1)
 	size_t ColumnarDisplayID = 0; // ID of sequence which will be shown on graph (only on columnar graph)
-	bool ShowMinMax = false;
+
+	OffsetScale SizeOfLeftInfo = { 0, 0 }; // Size by x { offset, scale } of minimal and maximal values on graph. Set {0, 0} or leave it default to not display values
+	SUI_Text FontFace = BASIC_FONT_NAME; // FontFace of left info values
+	Color TextColor = { 255,255,255,255 }; // Color of left info values;
+	bool AutoColorForColumnar = true; // Color of left info will be with current displayed graph (columnar only)
+	bool IndependentValuesX = false; // true means a same X size for all graphs (even if the max/min values are different) | false means a X size of graph will depend on aspect from maximal values quantities
+	bool IndependentValuesY = false; // true means a same Y size for all graphs (even if the max/min values are different) | false means a Y size of graph will depend on aspect from maximal global value
 
 	void Draw() override {
 		if (Visible) {
@@ -225,12 +400,19 @@ public:
 
 			Object2D::Draw();
 
-			bool conditionToUpdate = (GraphDirty) or (Spacing != lS) or (Roundness != lR) or (ColumnarDisplayID != lC) or (GraphType != lG) or (ShowMinMax != lSMM);
+			if (GraphType != lG) {
+				updateGlobalMinMax();
+			}
+
+			bool conditionToUpdate = (GraphDirty) or (Spacing != lS) or (Roundness != lR) or (ColumnarDisplayID != lC) or (GraphType != lG) or (lIX != IndependentValuesX) or (lIY != IndependentValuesY);
 			lS = Spacing;
 			lR = Roundness;
 			lC = ColumnarDisplayID;
 			lG = GraphType;
-			lSMM = ShowMinMax;
+			lIX = IndependentValuesX;
+			lIY = IndependentValuesY;
+
+			if (GraphDirty) updateGlobalMinMax();
 
 			if (cachedTexture.id and (cachedTexture.texture.width < RealSize.x or cachedTexture.texture.height < RealSize.y)) {
 				UnloadRenderTexture(cachedTexture);
@@ -245,13 +427,39 @@ public:
 				updateTexture();
 			}
 
+			Vector2 leftSize = { SizeOfLeftInfo.Offset + SizeOfLeftInfo.Scale * RealSize.x, RealSize.y / 4 };
+			bool conditionToUpdateMin = lastMin != minimalGraphValue or FontFace.isChanged() or lastLeft.Offset != SizeOfLeftInfo.Offset or lastLeft.Scale != SizeOfLeftInfo.Scale;
+			bool conditionToUpdateMax = lastMax != maximalGraphValue or FontFace.isChanged() or lastLeft.Offset != SizeOfLeftInfo.Offset or lastLeft.Scale != SizeOfLeftInfo.Scale;
+
+			if (!(SizeOfLeftInfo.Scale == 0 and SizeOfLeftInfo.Offset == 0)) {
+				if (!cachedMin.id or (cachedMin.texture.width < textureSizeMin.x or cachedMin.texture.height < textureSizeMin.y)) {
+					updateMinTexture(true);
+				}
+				else if (conditionToUpdateMin) {
+					updateMinTexture();
+				}
+			}
+
+			if (!(SizeOfLeftInfo.Scale == 0 and SizeOfLeftInfo.Offset == 0)) {
+				if (!cachedMax.id or (cachedMax.texture.width < textureSizeMax.x or cachedMax.texture.height < textureSizeMax.y)) {
+					updateMaxTexture(true);
+				}
+				else if (conditionToUpdateMax) {
+					updateMaxTexture();
+				}
+			}
+
+			FontFace.restate();
 			GraphDirty = false;
+			lastLeft = SizeOfLeftInfo;
+			lastMin = minimalGraphValue;
+			lastMax = maximalGraphValue;
 
 			/* I will add padding in future. Work piece of GraphBuilder
 			
 			Vector2 start = {
-						GraphRealPos.x + GraphPadding.left.Offset + GraphPadding.left.Scale * GraphRealSize.x + (GraphRealSize.x - GraphPadding.right.Offset - GraphPadding.left.Offset - GraphPadding.left.Scale * GraphRealSize.x - GraphPadding.right.Scale * GraphRealSize.x) * ((float)(i - 1) / (seq->sequence.size() - 1)),
-						GraphRealPos.y + GraphPadding.upper.Offset + GraphPadding.upper.Scale * GraphRealSize.y + (GraphRealSize.y - GraphPadding.lower.Offset - GraphPadding.upper.Offset - GraphPadding.upper.Scale * GraphRealSize.y - GraphPadding.lower.Scale * GraphRealSize.y) * (1 - ((prev - min) / (max - min)))
+				GraphRealPos.x + GraphPadding.left.Offset + GraphPadding.left.Scale * GraphRealSize.x + (GraphRealSize.x - GraphPadding.right.Offset - GraphPadding.left.Offset - GraphPadding.left.Scale * GraphRealSize.x - GraphPadding.right.Scale * GraphRealSize.x) * ((float)(i - 1) / (seq->sequence.size() - 1)),
+				GraphRealPos.y + GraphPadding.upper.Offset + GraphPadding.upper.Scale * GraphRealSize.y + (GraphRealSize.y - GraphPadding.lower.Offset - GraphPadding.upper.Offset - GraphPadding.upper.Scale * GraphRealSize.y - GraphPadding.lower.Scale * GraphRealSize.y) * (1 - ((prev - min) / (max - min)))
 			};
 			Vector2 end = {
 				GraphRealPos.x + GraphPadding.left.Offset + GraphPadding.left.Scale * GraphRealSize.x + (GraphRealSize.x - GraphPadding.right.Offset - GraphPadding.left.Offset - GraphPadding.left.Scale * GraphRealSize.x - GraphPadding.right.Scale * GraphRealSize.x) * ((float)i / (seq->sequence.size() - 1)),
@@ -261,9 +469,28 @@ public:
 			*/
 
 			Rectangle sourceRec = { 0.0f, (float)(cachedTexture.texture.height - textureSize.y), (float)textureSize.x, -(float)textureSize.y };
-			Rectangle destRec = { RealPos.x, RealPos.y, (float)RealSize.x, (float)RealSize.y };
+			Rectangle destRec = { RealPos.x + leftSize.x, RealPos.y, (float)RealSize.x - leftSize.x, (float)RealSize.y };
+
+			Rectangle sourceRecMin = { 0.0f, (float)(cachedMin.texture.height - textureSizeMin.y), (float)textureSizeMin.x, -(float)textureSizeMin.y };
+			Rectangle destRecMin = { RealPos.x + textParamsMin.x, RealPos.y + RealSize.y * 0.75 + textParamsMin.y, textureSizeMin.x, textureSizeMin.y };
+
+			Rectangle sourceRecMax = { 0.0f, (float)(cachedMax.texture.height - textureSizeMax.y), (float)textureSizeMax.x, -(float)textureSizeMax.y };
+			Rectangle destRecMax = { RealPos.x + textParamsMax.x, RealPos.y + textParamsMax.y, textureSizeMax.x, textureSizeMax.y };
+
+			Color c = TextColor;
+
+			if (AutoColorForColumnar and GraphType == GraphDisplayType::GRAPH_COLUMNAR) {
+				auto it = sequences.find(ColumnarDisplayID);
+				if (it != sequences.end()) {
+					c = it->second->color;
+				}
+			}
 
 			DrawTexturePro(cachedTexture.texture, sourceRec, destRec, { 0,0 }, 0, { 255,255,255,255 });
+			if (!(SizeOfLeftInfo.Scale == 0 and SizeOfLeftInfo.Offset == 0)) {
+				DrawTexturePro(cachedMin.texture, sourceRecMin, destRecMin, { 0,0 }, 0, c);
+				DrawTexturePro(cachedMax.texture, sourceRecMax, destRecMax, { 0,0 }, 0, c);
+			}
 		}
 	}
 
@@ -272,6 +499,14 @@ public:
 	~GraphBuilder() {
 		if (cachedTexture.id != 0) {
 			UnloadRenderTexture(cachedTexture);
+		}
+
+		if (cachedMin.id != 0) {
+			UnloadRenderTexture(cachedMin);
+		}
+
+		if (cachedMax.id != 0) {
+			UnloadRenderTexture(cachedMax);
 		}
 	}
 	GraphBuilder() = delete;

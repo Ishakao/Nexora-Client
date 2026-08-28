@@ -155,7 +155,7 @@ using RAYLIB_FUNCTIONAL::KEY_ENTER;
 using RAYLIB_FUNCTIONAL::SHADER_UNIFORM_FLOAT;
 using RAYLIB_FUNCTIONAL::SHADER_UNIFORM_VEC4;
 
-#include "SUIutils.h"
+#include "SUIutils.h" 
 #include <iostream>
 #include <vector>
 #include <cmath>
@@ -174,16 +174,16 @@ class Object2D;
 
 void updateObject2DVector(Object2D*);
 
-struct ScaleOffset {
+struct OffsetScale {
 	int Offset = 0; // value in pixels
 	float Scale = 0; // relative value
 };
 
 struct Padding {
-	ScaleOffset upper = { 0,0 };
-	ScaleOffset lower = { 0,0 };
-	ScaleOffset left = { 0,0 };
-	ScaleOffset right = { 0,0 };
+	OffsetScale upper = { 0,0 };
+	OffsetScale lower = { 0,0 };
+	OffsetScale left = { 0,0 };
+	OffsetScale right = { 0,0 };
 };
 
 struct SpecialVector2 {
@@ -284,8 +284,8 @@ inline void loadImage(const std::string& name, const std::string& path) {
 
 	if (pendingImages.find(name) != pendingImages.end()) {
 		ImagesLoadingMtx.unlock();
-		std::cout << "Image: " << name << " already exists" << std::endl; 
-		return; 
+		std::cout << "Image: " << name << " already exists" << std::endl;
+		return;
 	}
 
 	Image img = LoadImage(path.c_str());
@@ -390,7 +390,8 @@ inline void createFont(const char* name, std::string path, int size) {
 		GenTextureMipmaps(&ft.texture);
 		SetTextureFilter(ft.texture, TEXTURE_FILTER_TRILINEAR);
 		Fonts.emplace(name, ft);
-	} else {
+	}
+	else {
 		UnloadFont(ft);
 	}
 }
@@ -434,7 +435,8 @@ public:
 	const SUI_Text& operator=(const std::string& other) {
 		if (text.size() != other.size()) {
 			changed = true;
-		} else {
+		}
+		else {
 			changed = text != other;
 		}
 
@@ -447,7 +449,8 @@ public:
 
 		if (text.size() != st.size()) {
 			changed = true;
-		} else {
+		}
+		else {
 			changed = text != st;
 		}
 
@@ -458,7 +461,8 @@ public:
 	const SUI_Text& operator=(const SUI_Text& other) {
 		if (text.size() != other.size()) {
 			changed = true;
-		} else {
+		}
+		else {
 			changed = text != !other;
 		}
 
@@ -477,7 +481,8 @@ public:
 	bool operator==(const std::string& other) {
 		if (text.size() != other.size()) {
 			return false;
-		} else {
+		}
+		else {
 			return text == other;
 		}
 	}
@@ -493,7 +498,8 @@ public:
 	bool operator!=(const std::string& other) {
 		if (text.size() == other.size()) {
 			return text != other;
-		} else {
+		}
+		else {
 			return true;
 		}
 	}
@@ -501,7 +507,8 @@ public:
 	bool operator==(const SUI_Text& other) {
 		if (text.size() != other.size()) {
 			return false;
-		} else {
+		}
+		else {
 			return text == !other;
 		}
 	}
@@ -546,16 +553,16 @@ namespace Tasks {
 			delete this;
 		}
 
-		Task(float TimeInSeconds, std::function<void(void)> f) : TimeLeft(TimeInSeconds), Callback(f) {  }
+		Task(float TimeInSeconds, std::function<void(void)> f) : TimeLeft(TimeInSeconds), Callback(f) {
+			TasksMutex.lock();
+			ActiveTasks.push_back(this);
+			TasksMutex.unlock();
+		}
 		~Task() {}
 	};
 
 	Task* Create(float TimeInSeconds, std::function<void(void)> f) {
 		Task* t = new Task(TimeInSeconds, f);
-
-		TasksMutex.lock();
-		ActiveTasks.push_back(t);
-		TasksMutex.unlock();
 
 		return t;
 	}
@@ -568,7 +575,8 @@ namespace Tasks {
 				delete ActiveTasks[i];
 
 				ActiveTasks.erase(ActiveTasks.begin() + i);
-			} else {
+			}
+			else {
 				ActiveTasks[i]->TimeLeft -= dt;
 				i++;
 			}
@@ -683,7 +691,8 @@ namespace Animate {
 
 			if (e == In) {
 				return (expf(k * t) - 1.0f) / (expf(k) - 1.0f);
-			} else {
+			}
+			else {
 				return 1.0f - (expf(k * (1.0f - t)) - 1.0f) / (expf(k) - 1.0f);
 			}
 		}
@@ -707,11 +716,12 @@ namespace Animate {
 				else if (x < 2.0f / d1) { x -= 1.5f / d1; return n1 * x * x + 0.75f; }
 				else if (x < 2.5f / d1) { x -= 2.25f / d1; return n1 * x * x + 0.9375f; }
 				else { x -= 2.625f / d1; return n1 * x * x + 0.984375f; }
-			};
+				};
 
 			if (e == In) {
 				return 1.0f - bounceOut(1.0f - t);
-			} else {
+			}
+			else {
 				return bounceOut(t);
 			}
 		}
@@ -768,8 +778,8 @@ namespace Animate {
 			else if (type == "float") { *(float*)ptr = sui_lerp(startValueF, endValueF, getTime(func, ease, currentTime / endTime)); }
 			else if (type == "color") { *(Color*)ptr = ColorLerp(startValueC, endValueC, getTime(func, ease, currentTime / endTime)); }
 			else if (type == "vector2") { *(SpecialVector2*)ptr = SpecialVector2{ sui_lerp(startValueV.x, endValueV.x, getTime(func, ease, currentTime / endTime)), sui_lerp(startValueV.y, endValueV.y, getTime(func, ease, currentTime / endTime)) }; }
-			else if (type == "numx") { *(SpecialVector2::num_x*)ptr = sui_lerp(startValueNX, endValueNX, getTime(func, ease, currentTime / endTime));}
-			else if (type == "numy") { *(SpecialVector2::num_y*)ptr = sui_lerp(startValueNY, endValueNY, getTime(func, ease, currentTime / endTime));}
+			else if (type == "numx") { *(SpecialVector2::num_x*)ptr = sui_lerp(startValueNX, endValueNX, getTime(func, ease, currentTime / endTime)); }
+			else if (type == "numy") { *(SpecialVector2::num_y*)ptr = sui_lerp(startValueNY, endValueNY, getTime(func, ease, currentTime / endTime)); }
 			return false;
 		}
 
@@ -946,9 +956,9 @@ inline void Delete(Z* ptr) {
 	if (!ptr) return;
 
 	if (ptr->Parent) {
-		ptr->Parent->childsRemovedInFrame.insert({ ptr->uniqueID, ptr});
-		deletedObjectsByID.insert({ptr->uniqueID, ptr});
-		deletedObjectsByPtr.insert({ptr, ptr->uniqueID});
+		ptr->Parent->childsRemovedInFrame.insert({ ptr->uniqueID, ptr });
+		deletedObjectsByID.insert({ ptr->uniqueID, ptr });
+		deletedObjectsByPtr.insert({ ptr, ptr->uniqueID });
 
 		auto it = ptr->Parent->childsAddedInFrame.find(ptr->uniqueID);
 		if (it != ptr->Parent->childsAddedInFrame.end()) {
@@ -983,14 +993,15 @@ struct InstanceCallback {
 
 	InstanceCallback() = default;
 
-	template<typename F, typename=std::enable_if_t< !std::is_same_v<std::decay_t<F>, InstanceCallback>>>
+	template<typename F, typename = std::enable_if_t< !std::is_same_v<std::decay_t<F>, InstanceCallback>>>
 	InstanceCallback(F&& f) {
 		if constexpr (std::is_invocable_v<F, Instance*, Instance*>) {
 			func = std::forward<F>(f);
-		} else if constexpr (std::is_invocable_v<F, Instance*>) {
+		}
+		else if constexpr (std::is_invocable_v<F, Instance*>) {
 			func = [f = std::forward<F>(f)](Instance* a, Instance*) mutable {
 				f(a);
-			};
+				};
 		}
 	}
 
@@ -1037,10 +1048,10 @@ public:
 
 	Instance(bool a) : __ParentObject(true), uniqueID(currentUniqueObjectID++) {};
 	Instance(Instance* p) : Parent(p), uniqueID(currentUniqueObjectID++) {
-		if (p) { 
-			p->Children.push_back(this); 
-			p->childsAddedInFrame.insert({ p->uniqueID, this }); 
-			p->updateChildrenZIndex = true; 
+		if (p) {
+			p->Children.push_back(this);
+			p->childsAddedInFrame.insert({ p->uniqueID, this });
+			p->updateChildrenZIndex = true;
 		}
 	}
 	Instance() = delete;
@@ -1172,7 +1183,7 @@ public:
 
 				l(child);
 			}
-		};
+			};
 
 		l(this);
 
@@ -1200,12 +1211,14 @@ public:
 		for (const auto& [type, func] : events) {
 			if (type == TICK) {
 				func(this);
-			} else if (type == CHILD_ADDED) {
+			}
+			else if (type == CHILD_ADDED) {
 				for (auto& [id, ptr] : childsAddedInFrame) {
 					if (childsRemovedInFrame.contains(id)) continue;
 					func(this, ptr);
 				}
-			} else if (type == CHILD_REMOVED) {
+			}
+			else if (type == CHILD_REMOVED) {
 				for (auto& [id, ptr] : childsRemovedInFrame) {
 					if (childsAddedInFrame.contains(id)) continue;
 					func(this, ptr);
@@ -1415,7 +1428,7 @@ protected:
 		if (Active != lastActive or lastZIndex != ZIndex) {
 			lastActive = Active;
 			lastZIndex = ZIndex;
-			
+
 			if (Parent) {
 				Parent->updateChildrenZIndex = true;
 			}
@@ -1423,7 +1436,7 @@ protected:
 
 		childsRemovedInFrame.clear();
 		childsAddedInFrame.clear();
-	} 
+	}
 
 	void eventHandler();
 	void PosOrSizeChanged();
@@ -1445,7 +1458,7 @@ public:
 		return false;
 	}
 
-	SpecialVector2 RealSize{0,0,this}; // Absolute size in pixels (not for changing from somewhere)
+	SpecialVector2 RealSize{ 0,0,this }; // Absolute size in pixels (not for changing from somewhere)
 	SpecialVector2 RealPos{}; // Absolute position in pixels (not for changing from somewhere)
 	SUI_EEC EnterEventCondition = SUI_EEC::EEC_DEFAULT;
 	SpecialVector2 PositionOFFSET = { 0,0,this };
@@ -1544,7 +1557,8 @@ public:
 				SpecialVector2 canvasPx = getCanvasRealPos(obj);
 				posPx.x = parentPosPx.x + myLocalPx.x - canvasPx.x;
 				posPx.y = parentPosPx.y + myLocalPx.y - canvasPx.y;
-			} else {
+			}
+			else {
 				posPx.x = parentPosPx.x + myLocalPx.x;
 				posPx.y = parentPosPx.y + myLocalPx.y;
 			}
@@ -1610,7 +1624,8 @@ public:
 					scrRP.y > pos.y or scrRP.y + scrRS.y < pos.y) {
 					return false;
 				}
-			} else {
+			}
+			else {
 				if (pos.x >= RealPos.x and pos.x <= RealPos.x + RealSize.x and pos.y >= RealPos.y and pos.y <= RealPos.y + RealSize.y) return true;
 			}
 		}
@@ -1660,15 +1675,15 @@ public:
 		return i;
 	}
 
-	Object2D(bool a) : Instance(a) { 
-		Name = DefaultName; 
+	Object2D(bool a) : Instance(a) {
+		Name = DefaultName;
 		Class = DefaultClass;
 
 		updateAncestorWhichParentIsScroll();
 	};
 
-	Object2D(Instance* p) : Instance(p) { 
-		Name = DefaultName; 
+	Object2D(Instance* p) : Instance(p) {
+		Name = DefaultName;
 		Class = DefaultClass;
 
 		updateAncestorWhichParentIsScroll();
@@ -1790,7 +1805,7 @@ inline void updateChildren(Instance* parent) {
 		if (az) return true;
 		if (bz) return false;
 		return true;
-	});
+		});
 }
 
 inline Font getFont(const std::string& name) {
@@ -1905,7 +1920,7 @@ private:
 				}
 
 				SpecialVector2 pos = { casted->Position.x * casted->Size.x + casted->PositionOFFSET.x - (casted->BorderTransparency != 1 ? casted->BorderThickness : 0), casted->Position.y * casted->Size.y + casted->PositionOFFSET.y - (casted->BorderTransparency != 1 ? casted->BorderThickness : 0) };
-				SpecialVector2 lastpos = { pos.x + casted->RealSize.x + (casted->BorderTransparency != 1 ? casted->BorderThickness*2 : 0), pos.y + casted->RealSize.y + (casted->BorderTransparency != 1 ? casted->BorderThickness * 2 : 0) };
+				SpecialVector2 lastpos = { pos.x + casted->RealSize.x + (casted->BorderTransparency != 1 ? casted->BorderThickness * 2 : 0), pos.y + casted->RealSize.y + (casted->BorderTransparency != 1 ? casted->BorderThickness * 2 : 0) };
 
 
 				for (int i = pos.x / GridSectorSize; i <= lastpos.x / GridSectorSize; i++) {
@@ -1918,7 +1933,7 @@ private:
 			for (Instance* child : obj->Children) {
 				sectorsCalculate(child, sect);
 			}
-		};
+			};
 
 		sectorsCalculate(generalObj, sectors);
 
@@ -1936,7 +1951,8 @@ private:
 				sector = it2->second;
 				founded = true;
 			}
-		} else {
+		}
+		else {
 			Grid[x] = {};
 		}
 
@@ -1948,13 +1964,14 @@ private:
 			Grid[x][y] = sector;
 		}
 
-		sector->Objects.insert({obj->uniqueID, obj});
+		sector->Objects.insert({ obj->uniqueID, obj });
 
 		auto it3 = SectorsOnObject.find(obj->uniqueID);
 
 		if (it3 == SectorsOnObject.end()) {
 			SectorsOnObject[obj->uniqueID] = { sector };
-		} else {
+		}
+		else {
 			SectorsOnObject[obj->uniqueID].push_back(sector);
 		}
 	}
@@ -1964,8 +1981,8 @@ private:
 
 	void checkAndUpdateCurrentSectors(bool force = false) {
 		SpecialVector2 fullSize = RealSize;
-		SpecialVector2 fullPos = { CanvasPosition.x * RealSize.x + CanvasPositionOFFSET.x, CanvasPosition.y * RealSize.y + CanvasPositionOFFSET.y }; 
-		
+		SpecialVector2 fullPos = { CanvasPosition.x * RealSize.x + CanvasPositionOFFSET.x, CanvasPosition.y * RealSize.y + CanvasPositionOFFSET.y };
+
 		if (force or lastFullSize.x != fullSize.x or lastFullSize.y != fullSize.y or
 			lastCanvasFullPosition.x != fullPos.x or lastCanvasFullPosition.y != fullPos.y) {
 			lastFullSize = fullSize;
@@ -1996,7 +2013,8 @@ private:
 
 					if (f2 == f->second.end()) {
 						continue;
-					} else {
+					}
+					else {
 						s = f2->second;
 					}
 
@@ -2017,7 +2035,8 @@ private:
 			for (auto& [x, y] : sectors) {
 				addObjToSector(child, x, y);
 			}
-		} else { // updating current sector
+		}
+		else { // updating current sector
 			for (ScrollSector* sector : checkIt->second) {
 				auto it2 = sector->Objects.find(child->uniqueID);
 				if (it2 != sector->Objects.end()) {
@@ -2035,7 +2054,7 @@ private:
 	}
 public:
 	void UpdateSectors(Instance* child) {
-		toUpdateSectors.insert({ child->uniqueID, child});
+		toUpdateSectors.insert({ child->uniqueID, child });
 	}
 
 	void UpdateObjectTickState(Instance* child) {
@@ -2043,8 +2062,9 @@ public:
 		bool hasTick = child->hasEvent(TICK);
 
 		if (hasTick and it == isTick.end()) {
-			isTick.insert({child->uniqueID, child});
-		} else if (!hasTick and it != isTick.end()) {
+			isTick.insert({ child->uniqueID, child });
+		}
+		else if (!hasTick and it != isTick.end()) {
 			isTick.erase(it);
 		}
 	}
@@ -2053,8 +2073,8 @@ public:
 	SpecialVector2 CanvasPosition = { 0,0 };
 	SpecialVector2 CanvasSizeOFFSET = { 0,0 };
 	SpecialVector2 CanvasPositionOFFSET = { 0,0 };
-	SpecialVector2 CanvasAbsoluteSize = {0,0};
-	SpecialVector2 CanvasAbsolutePosition = {0,0};
+	SpecialVector2 CanvasAbsoluteSize = { 0,0 };
+	SpecialVector2 CanvasAbsolutePosition = { 0,0 };
 	float ScrollSpeed = 0.25;
 	float ScrollSpeedOFFSET = 0;
 	bool CropDescendants = true;
@@ -2065,7 +2085,7 @@ public:
 	bool ScrollEnabled = true;
 	bool Animated = false;
 
-	void Draw(bool force=false) {
+	void Draw(bool force = false) {
 		Object2D::Draw();
 
 		bool pushed = false;
@@ -2226,11 +2246,13 @@ public:
 					if (Animated) {
 						Animate::Create(&CanvasPositionOFFSET.y, 0.125, newY);
 						Animate::Create(&CanvasPosition.y, 0.125, newY1);
-					} else {
+					}
+					else {
 						CanvasPositionOFFSET.y = newY;
 						CanvasPosition.y = newY1;
 					}
-				} else if (isX) {
+				}
+				else if (isX) {
 					float currentX = (RealSize.x * CanvasPosition.x) + CanvasPositionOFFSET.x;
 					float totalStep = (RealSize.x * ScrollSpeed) + ScrollSpeedOFFSET;
 					float newTotalX = currentX - (WheelMove * totalStep);
@@ -2243,7 +2265,8 @@ public:
 					if (Animated) {
 						Animate::Create(&CanvasPositionOFFSET.x, 0.125, newX);
 						Animate::Create(&CanvasPosition.x, 0.125, newX1);
-					} else {
+					}
+					else {
 						CanvasPositionOFFSET.x = newX;
 						CanvasPosition.x = newX1;
 					}
@@ -2265,7 +2288,7 @@ public:
 
 		return i;
 	}
-	
+
 	~ScrollFrame() {
 		for (auto& _ : Grid) {
 			for (auto& [_, s] : _.second) {
@@ -2274,7 +2297,7 @@ public:
 		}
 	}
 
-	ScrollFrame(bool a) : Object2D(a) { Name = DefaultName; Class = DefaultClass; EnterEventCondition = EEC_IF_DESCENDANT_HIGHER; Active = true;  };
+	ScrollFrame(bool a) : Object2D(a) { Name = DefaultName; Class = DefaultClass; EnterEventCondition = EEC_IF_DESCENDANT_HIGHER; Active = true; };
 	ScrollFrame(Instance* p) : Object2D(p) { Name = DefaultName; Class = DefaultClass; EnterEventCondition = EEC_IF_DESCENDANT_HIGHER; Active = true; }
 
 	ScrollFrame() = delete;
@@ -2362,12 +2385,14 @@ class TextLabel : public Object2D {
 				size_t idx = charOffsets[std::max(3, (int)(charOffsets.size() - MaxVisibleSymbols)) - 3];
 				visibleText = "...";
 				visibleText += Text.substr(idx);
-			} else {
+			}
+			else {
 				size_t idx = charOffsets[std::max(3, MaxVisibleSymbols) - 3];
 				visibleText = Text.substr(0, idx);
 				visibleText += "...";
 			}
-		} else {
+		}
+		else {
 			visibleText = !Text;
 		}
 
@@ -2382,7 +2407,7 @@ class TextLabel : public Object2D {
 			if (cachedText.id != 0) {
 				UnloadRenderTexture(cachedText);
 			}
-			
+
 			if (Text.size()) {
 				cachedText = LoadRenderTexture(newSize.x * TextTextureUpdateAspect, newSize.y * TextTextureUpdateAspect);
 				lastNewSize = SpecialVector2{ newSize.x * TextTextureUpdateAspect, newSize.y * TextTextureUpdateAspect };
@@ -2449,7 +2474,8 @@ public:
 
 			if (lastParams.z != textParams.z or (cachedText.id == 0 and Text.size()) or dirtyCondition or lastMaxVisible != MaxVisibleSymbols) {
 				updateTexture();
-			} else {
+			}
+			else {
 				if (std::fabsf(lastRealSize.x - RealSize.x) >= TextTextureUpdateAspect or std::fabsf(lastRealSize.y - RealSize.y) >= TextTextureUpdateAspect) {
 					lastRealSize = RealSize;
 					newSize = MeasureTextEx(getFont(!FontFace), visibleText.c_str(), textParams.z, Spacing);
@@ -2469,7 +2495,7 @@ public:
 			}
 		}
 	}
-	
+
 	TextLabel* Clone() const override {
 		TextLabel* i = new TextLabel(*this);
 		i->Parent = nullptr;
@@ -2552,7 +2578,7 @@ class TextBox : public Object2D {
 
 	std::vector<int> charOffsets;
 	int lines = 0;
-	Vector2 highlightedIndexes{-1,-1}; // -1 in any slot - text not highlighted
+	Vector2 highlightedIndexes{ -1,-1 }; // -1 in any slot - text not highlighted
 	Vector3 textParams{};
 	RenderTexture2D cachedText;
 	TextBox* lastFocused = nullptr;
@@ -2570,10 +2596,12 @@ class TextBox : public Object2D {
 			textParams.y = 0;
 			textParams.x = 0;
 			textParams.z = RealSize.y;
-		} else {
+		}
+		else {
 			if (Text != "") {
 				textParams = getTextCFrame(Text.c_str(), getFont(!FontFace), { RealPos.x, RealPos.y, RealSize.x, RealSize.y }, TextAnchor, TextSize, Spacing);
-			} else {
+			}
+			else {
 				textParams = getTextCFrame(PlaceholderText.c_str(), getFont(!FontFace), { RealPos.x, RealPos.y, RealSize.x, RealSize.y }, TextAnchor, TextSize, Spacing);
 			}
 		}
@@ -2589,7 +2617,8 @@ class TextBox : public Object2D {
 
 		if (Text != "") {
 			newSize = MeasureTextEx(getFont(!FontFace), Text.c_str(), textParams.z, Spacing);
-		} else {
+		}
+		else {
 			if (CursorIndex == -1 or FocusedTextBox != this) {
 				newSize = MeasureTextEx(getFont(!FontFace), PlaceholderText.c_str(), textParams.z, Spacing);
 			}
@@ -2619,8 +2648,9 @@ class TextBox : public Object2D {
 			std::string t;
 			if (HideText == '\0') {
 				t = Text;
-			} else {
-				for (int i = 0; i < charOffsets.size()-1; i++) {
+			}
+			else {
+				for (int i = 0; i < charOffsets.size() - 1; i++) {
 					t += HideText;
 				}
 			}
@@ -2630,10 +2660,11 @@ class TextBox : public Object2D {
 			}
 
 			DrawTextEx(getFont(FontFace), t.c_str(), { 0,0 }, textParams.z, Spacing, { 255,255,255,255 });
-		} else {
+		}
+		else {
 			lines = 0;
 			if (CursorIndex == -1 or FocusedTextBox != this) {
-				DrawTextEx(getFont(FontFace), PlaceholderText.c_str(), {0,0}, textParams.z, Spacing, {255,255,255,255});
+				DrawTextEx(getFont(FontFace), PlaceholderText.c_str(), { 0,0 }, textParams.z, Spacing, { 255,255,255,255 });
 			}
 		}
 
@@ -2662,7 +2693,7 @@ public:
 	bool ClipboardCopyAllowed = true;
 	std::function<bool(const std::string&)> ClipboardPasteCondition;
 	bool TextHighlightAllowed = true;
-	
+
 	int CursorSize = 3;
 	TextBoxType Type = TextBoxType::TEXTBOX_RESIZING;
 
@@ -2681,9 +2712,11 @@ public:
 
 		if (updateCondition1 or lastType != Type or cachedText.id == 0 or lastHideText != HideText or lastParams.x != textParams.x or lastParams.y != textParams.y or lastParams.z != textParams.z or ((FocusedTextBox == this and lastFocused != this) or (lastFocused == this and FocusedTextBox != this))) {
 			updateTexture();
-		} else if (Text.isChanged()) {
+		}
+		else if (Text.isChanged()) {
 			updateTexture();
-		} else {
+		}
+		else {
 			if (lastRealSize.x != RealSize.x or lastRealSize.y != RealSize.y) {
 				updateTextParams();
 				if (Text == "") {
@@ -2797,12 +2830,15 @@ public:
 			if (higherObject != this and higherObject) {
 				if (higherObject->Class == TEXTBOX) {
 					FocusedTextBox = static_cast<TextBox*>(higherObject);
-				} else {
+				}
+				else {
 					FocusedTextBox = nullptr;
 				}
-			} else if (not higherObject) {
+			}
+			else if (not higherObject) {
 				FocusedTextBox = nullptr;
-			} else if (pointInObject(mousePosition) and higherObject == this) {
+			}
+			else if (pointInObject(mousePosition) and higherObject == this) {
 				CursorTime = 0.0f;
 				CursorVisible = true;
 				FocusedTextBox = this;
@@ -2823,7 +2859,8 @@ public:
 					for (int i = 0; i < Text.size(); i++) {
 						textBeforeCursor += HideText;
 					}
-				} else {
+				}
+				else {
 					textBeforeCursor = !Text;
 				}
 
@@ -2831,7 +2868,7 @@ public:
 				float textStartY = RealPos.y + textParams.y;
 				float clickX = mousePosition.x - textStartX + ((Type == TextBoxType::TEXTBOX_VIEWPORTED) ? viewportPosition : 0.0f);
 				float clickY = mousePosition.y - textStartY + ((Type == TextBoxType::TEXTBOX_VIEWPORTED) ? viewportPosition : 0.0f);
-			    
+
 				int currentLine = clickY / textParams.z + 1;
 
 				CursorIndex = 0;
@@ -2977,14 +3014,14 @@ public:
 				CursorVisible = true;
 				CursorTime = 0.0f;
 			}
-		   
+
 			if (IsKeyPressed(KEY_DELETE)) {
 				if (CursorIndex < (int)charOffsets.size() - 1) {
 					Text = Text.substr(0, charOffsets[CursorIndex]) + Text.substr(charOffsets[CursorIndex + 1]);
 
 					updateCharOffsets();
 				}
-			    
+
 				CursorVisible = true;
 				CursorTime = 0.0f;
 			}
@@ -3041,7 +3078,8 @@ public:
 
 						CursorIndex++;
 					}
-				} else {
+				}
+				else {
 					CursorIndex++;
 				}
 
@@ -3058,7 +3096,7 @@ public:
 
 				if (symbolsLeft > 0 or maxSymbols < 0) {
 					std::string toPaste = clipboardText; // СДЕЛАТЬ ОГРАНИЧЕНИЕ ПО maxSymbols
-				    
+
 					bool allowed = true;
 					if (ClipboardPasteCondition and !ClipboardPasteCondition(toPaste)) allowed = false;
 
@@ -3124,7 +3162,8 @@ public:
 
 				if (Text.empty() or CursorIndex == -1) {
 					viewportPosition = 0.0f;
-				} else {
+				}
+				else {
 					std::string textBeforeCursor = Text.substr(0, charOffsets[CursorIndex]);
 					SpecialVector2 textSize = MeasureTextEx(getFont(!FontFace), textBeforeCursor.c_str(), textParams.z, Spacing);
 
@@ -3132,7 +3171,8 @@ public:
 
 					if (currentX - viewportPosition >= RealSize.x) {
 						viewportPosition = currentX - RealSize.x;
-					} else if (currentX < viewportPosition) {
+					}
+					else if (currentX < viewportPosition) {
 						viewportPosition = currentX;
 					}
 
@@ -3229,7 +3269,7 @@ class ImageLabel : public Object2D {
 	bool isMemoryLoadedTex = false;
 
 	/* Previous version of ImageLabel textures system
-	
+
 	void updateTexture() {
 		if ((tex.id == 0 or lastId != tex.id) and image.data) {
 			if (tex.id != 0) {
@@ -3244,7 +3284,7 @@ class ImageLabel : public Object2D {
 			SetTextureWrap(tex, TEXTURE_WRAP_CLAMP);
 		}
 	}
-	
+
 	*/
 public:
 	ImageOverlayFormat Overlay = ImageOverlayFormat::IMAGE_FIT;
@@ -3288,12 +3328,14 @@ public:
 					float scaledHeight = RealSize.x / imageAspect;
 					destRec.y += (RealSize.y - scaledHeight) / 2.0f;
 					destRec.height = scaledHeight;
-				} else {
+				}
+				else {
 					float scaledWidth = RealSize.y * imageAspect;
 					destRec.x += (RealSize.x - scaledWidth) / 2.0f;
 					destRec.width = scaledWidth;
 				}
-			} else if (Overlay == ImageOverlayFormat::IMAGE_CROP) {
+			}
+			else if (Overlay == ImageOverlayFormat::IMAGE_CROP) {
 				float imageAspect = (float)tex.width / tex.height;
 				float rectAspect = RealSize.x / RealSize.y;
 
@@ -3301,7 +3343,8 @@ public:
 					float cropWidth = tex.height * rectAspect;
 					srcRec.x = (tex.width - cropWidth) / 2.0f;
 					srcRec.width = cropWidth;
-				} else {
+				}
+				else {
 					float cropHeight = tex.width / rectAspect;
 					srcRec.y = (tex.height - cropHeight) / 2.0f;
 					srcRec.height = cropHeight;
@@ -3312,8 +3355,8 @@ public:
 				static bool roundShaderLoaded = false;
 				static Shader shader;
 				static float lastRoundness = 0;
-				static Rectangle lastObjectData = {0,0,0,0};
-				static Rectangle lastImageData = {0,0,0,0};
+				static Rectangle lastObjectData = { 0,0,0,0 };
+				static Rectangle lastImageData = { 0,0,0,0 };
 				if (!roundShaderLoaded) {
 					shader = getShader("TextureRoundness");
 					roundShaderLoaded = true;
@@ -3337,10 +3380,12 @@ public:
 				BeginShaderMode(shader);
 				DrawTexturePro(tex, srcRec, destRec, Origin, Rotation, { ImageColor.r, ImageColor.g, ImageColor.b, (unsigned char)(ImageColor.a * (1 - ImageTransparency)) });
 				EndShaderMode();
-			} else {
+			}
+			else {
 				DrawTexturePro(tex, srcRec, destRec, Origin, Rotation, { ImageColor.r, ImageColor.g, ImageColor.b, (unsigned char)(ImageColor.a * (1 - ImageTransparency)) });
 			}
-		} else {
+		}
+		else {
 			setImage(currentPair);
 		}
 	}
@@ -3353,7 +3398,7 @@ public:
 		}
 
 		if (tex.id != 0 and isMemoryLoadedTex) UnloadTexture(tex);
-	
+
 		isMemoryLoadedTex = true;
 		tex = LoadTextureFromImage(image);
 		GenTextureMipmaps(&tex);
@@ -3541,106 +3586,109 @@ inline void Object2D::eventHandler() {
 
 	for (const auto& [type, func, mouse] : events) {
 		switch (type) {
-			case TICK: {
-				func(this);
-				break;
-			} case MOUSE_ENTER: {
-				bool entered = false;
+		case TICK: {
+			func(this);
+			break;
+		} case MOUSE_ENTER: {
+			bool entered = false;
 
-				if (mouseOnObject) {
-					bool enterAllowed = (
-						EnterEventCondition == SUI_EEC::EEC_DEFAULT ? this == higherObject : 
-						(EnterEventCondition == SUI_EEC::EEC_EVERY_ENTER ? true :
-							EnterEventCondition == SUI_EEC::EEC_IF_DESCENDANT_HIGHER ? ((higherObject == this and higherObject != nullptr) or (higherObject and higherObject != this and higherObject->isDescendantOf(this))) : false)
-					);
-					
-					if (Visible and ((higherObject == this and PreviousHigherObject != this) or enterAllowed)) {
-						entered = true;
-					}
-				}
-
-				if (entered and !MouseEntered) {
-					MouseEntered = true;
-					func(this);
-				}
-				break;
-			} case MOUSE_LEAVE: {
+			if (mouseOnObject) {
 				bool enterAllowed = (
 					EnterEventCondition == SUI_EEC::EEC_DEFAULT ? this == higherObject :
 					(EnterEventCondition == SUI_EEC::EEC_EVERY_ENTER ? true :
+						EnterEventCondition == SUI_EEC::EEC_IF_DESCENDANT_HIGHER ? ((higherObject == this and higherObject != nullptr) or (higherObject and higherObject != this and higherObject->isDescendantOf(this))) : false)
+					);
+
+				if (Visible and ((higherObject == this and PreviousHigherObject != this) or enterAllowed)) {
+					entered = true;
+				}
+			}
+
+			if (entered and !MouseEntered) {
+				MouseEntered = true;
+				func(this);
+			}
+			break;
+		} case MOUSE_LEAVE: {
+			bool enterAllowed = (
+				EnterEventCondition == SUI_EEC::EEC_DEFAULT ? this == higherObject :
+				(EnterEventCondition == SUI_EEC::EEC_EVERY_ENTER ? true :
 					EnterEventCondition == SUI_EEC::EEC_IF_DESCENDANT_HIGHER ? (higherObject == this or (higherObject and higherObject != this and higherObject->isDescendantOf(this))) : false)
 				);
 
-				if (MouseEntered and (!Visible or !mouseOnObject or !enterAllowed)) {
-					MouseEntered = false;
-					func(this);
-				}
-				break;
-			} case MOUSE_CLICK: {
-				if (IsMouseButtonPressed(mouse) and mouseOnObject and higherObject == this) {
-					func(this);
-				}
-				break;
-			} case MOUSE_HOLD_START: {
-				if (IsMouseButtonPressed(mouse) and mouseOnObject and higherObject == this) {
-					if (mouse == MOUSE_LEFT) {
-						startedOnObject1 = true;
-					}
-					else if (mouse == MOUSE_RIGHT) {
-						startedOnObject2 = true;
-					}
-					else if (mouse == MOUSE_MIDDLE) {
-						startedOnObject3 = true;
-					}
-					func(this);
-				}
-
+			if (MouseEntered and (!Visible or !mouseOnObject or !enterAllowed)) {
+				MouseEntered = false;
+				func(this);
+			}
+			break;
+		} case MOUSE_CLICK: {
+			if (IsMouseButtonPressed(mouse) and mouseOnObject and higherObject == this) {
+				func(this);
+			}
+			break;
+		} case MOUSE_HOLD_START: {
+			if (IsMouseButtonPressed(mouse) and mouseOnObject and higherObject == this) {
 				if (mouse == MOUSE_LEFT) {
-					hasStartHold1 = true;
+					startedOnObject1 = true;
 				}
 				else if (mouse == MOUSE_RIGHT) {
-					hasStartHold2 = true;
+					startedOnObject2 = true;
 				}
 				else if (mouse == MOUSE_MIDDLE) {
-					hasStartHold3 = true;
+					startedOnObject3 = true;
 				}
-
-				break;
-			} case MOUSE_HOLD_END: {
-				if (IsMouseButtonReleased(mouse)) {
-					if (mouse == MOUSE_LEFT) {
-						mouseReleased1 = func;
-					} else if (mouse == MOUSE_RIGHT) {
-						mouseReleased2 = func;
-					} else if (mouse == MOUSE_MIDDLE) {
-						mouseReleased3 = func;
-					}
-				}
-				break;
-			} case CHILD_ADDED: {
-				for (auto& [id, ptr] : childsAddedInFrame) {
-					if (childsRemovedInFrame.contains(id)) continue;
-					func(this, ptr);
-				}
-				break;
-			} case CHILD_REMOVED: {
-				for (auto& [id, ptr] : childsRemovedInFrame) {
-					if (childsAddedInFrame.contains(id)) continue;
-					func(this, ptr);
-				}
-				break;
-			} case TEXT_CHANGED: {
-				if (Class == TEXTLABEL) {
-					if (static_cast<TextLabel*>(this)->Text.isChanged()) {
-						func(this);
-					}
-				} else if (Class == TEXTBOX) {
-					if (static_cast<TextBox*>(this)->Text.isChanged()) {
-						func(this);
-					}
-				}
-				break;
+				func(this);
 			}
+
+			if (mouse == MOUSE_LEFT) {
+				hasStartHold1 = true;
+			}
+			else if (mouse == MOUSE_RIGHT) {
+				hasStartHold2 = true;
+			}
+			else if (mouse == MOUSE_MIDDLE) {
+				hasStartHold3 = true;
+			}
+
+			break;
+		} case MOUSE_HOLD_END: {
+			if (IsMouseButtonReleased(mouse)) {
+				if (mouse == MOUSE_LEFT) {
+					mouseReleased1 = func;
+				}
+				else if (mouse == MOUSE_RIGHT) {
+					mouseReleased2 = func;
+				}
+				else if (mouse == MOUSE_MIDDLE) {
+					mouseReleased3 = func;
+				}
+			}
+			break;
+		} case CHILD_ADDED: {
+			for (auto& [id, ptr] : childsAddedInFrame) {
+				if (childsRemovedInFrame.contains(id)) continue;
+				func(this, ptr);
+			}
+			break;
+		} case CHILD_REMOVED: {
+			for (auto& [id, ptr] : childsRemovedInFrame) {
+				if (childsAddedInFrame.contains(id)) continue;
+				func(this, ptr);
+			}
+			break;
+		} case TEXT_CHANGED: {
+			if (Class == TEXTLABEL) {
+				if (static_cast<TextLabel*>(this)->Text.isChanged()) {
+					func(this);
+				}
+			}
+			else if (Class == TEXTBOX) {
+				if (static_cast<TextBox*>(this)->Text.isChanged()) {
+					func(this);
+				}
+			}
+			break;
+		}
 		}
 	}
 
@@ -3678,57 +3726,59 @@ inline void Object2D::eventHandler() {
 }
 
 inline std::vector<unsigned char> PngBytesToJpgBytes(const std::string& path, int quality = 60) {
-    Image img = LoadImage(path.c_str());
+	Image img = LoadImage(path.c_str());
 
-    if (img.data == nullptr) {
-        return {};
-    }
+	if (img.data == nullptr) {
+		return {};
+	}
 
-    if (img.width > 1920) {
-        int targetWidth = 1920;
-        int targetHeight = (img.height * 1920) / img.width;
-        ImageResize(&img, targetWidth, targetHeight);
-    }
+	if (img.width > 1920) {
+		int targetWidth = 1920;
+		int targetHeight = (img.height * 1920) / img.width;
+		ImageResize(&img, targetWidth, targetHeight);
+	}
 
-    Image background = GenImageColor(img.width, img.height, WHITE);
+	Image background = GenImageColor(img.width, img.height, WHITE);
 
-    ImageDraw(&background, img, 
-              Rectangle{ 0, 0, (float)img.width, (float)img.height }, 
-              Rectangle{ 0, 0, (float)img.width, (float)img.height }, 
-              WHITE);
+	ImageDraw(&background, img,
+		Rectangle{ 0, 0, (float)img.width, (float)img.height },
+		Rectangle{ 0, 0, (float)img.width, (float)img.height },
+		WHITE);
 
-    ImageFormat(&background, PIXELFORMAT_UNCOMPRESSED_R8G8B8);
+	ImageFormat(&background, PIXELFORMAT_UNCOMPRESSED_R8G8B8);
 
-    int channels = 3; 
-    if (background.format == PIXELFORMAT_UNCOMPRESSED_R8G8B8A8) {
-        channels = 4;
-    } else if (background.format == PIXELFORMAT_UNCOMPRESSED_R8G8B8) {
-        channels = 3;
-    } else {
-        ImageFormat(&background, PIXELFORMAT_UNCOMPRESSED_R8G8B8A8);
-        channels = 4;
-    }
+	int channels = 3;
+	if (background.format == PIXELFORMAT_UNCOMPRESSED_R8G8B8A8) {
+		channels = 4;
+	}
+	else if (background.format == PIXELFORMAT_UNCOMPRESSED_R8G8B8) {
+		channels = 3;
+	}
+	else {
+		ImageFormat(&background, PIXELFORMAT_UNCOMPRESSED_R8G8B8A8);
+		channels = 4;
+	}
 
-    std::vector<unsigned char> outBytes;
+	std::vector<unsigned char> outBytes;
 
-    stbi_write_jpg_to_func(
-        [](void* context, void* data, int size) {
-            auto* vec = static_cast<std::vector<unsigned char>*>(context);
-            auto* bytes = static_cast<unsigned char*>(data);
-            vec->insert(vec->end(), bytes, bytes + size);
-        },
-        &outBytes,
-        background.width,
-        background.height,
-        channels,
-        background.data,
-        quality
-    );
+	stbi_write_jpg_to_func(
+		[](void* context, void* data, int size) {
+			auto* vec = static_cast<std::vector<unsigned char>*>(context);
+			auto* bytes = static_cast<unsigned char*>(data);
+			vec->insert(vec->end(), bytes, bytes + size);
+		},
+		&outBytes,
+		background.width,
+		background.height,
+		channels,
+		background.data,
+		quality
+	);
 
-    UnloadImage(img);
-    UnloadImage(background);
+	UnloadImage(img);
+	UnloadImage(background);
 
-    return outBytes;
+	return outBytes;
 }
 
 inline void DrawFrame(Instance* StartInstance) {
@@ -3749,14 +3799,13 @@ inline void toggleFPS(Instance* s, Color textColor = { 0,0,0,255 }) {
 			if (last != accurateFPS) {
 				labelFPS->SetText(std::to_string(accurateFPS) + " FPS");
 			}
-		});
+			});
 		labelFPS->Name = "FPS_LABEL";
 		labelFPS->Active = false;
 		labelFPS->Size = SpecialVector2{ 0.15, 0.1 };
 		labelFPS->Position = SpecialVector2{ 0.85, 0 };
 		labelFPS->TextAnchor = TextAnchorEnum::NE;
 		labelFPS->ZIndex = 1000;
-		labelFPS->TextColor = { 0,0,0,255 };
 		labelFPS->Visible = false;
 		labelFPS->TextColor = textColor;
 	}
@@ -3788,15 +3837,20 @@ inline namespace debug {
 	ScrollFrame* console = nullptr;
 	std::vector<std::string> textQueue;
 
-	void print(std::string text) {
+	void print(const std::string& text) {
 		if (!console) { textQueue.push_back(text); return; }
-		TextLabel* sas = new TextLabel(nullptr);
-		sas->SetText(text);
+		TextLabel* sas = new TextLabel(console);
 		sas->BackgroundTransparency = 1;
 		sas->TextColor = typeColor[currentColor]; sas->TextSize = -1;
-		sas->SetFont(BASIC_FONT_NAME);
+		sas->FontFace = BASIC_FONT_NAME;
 		sas->TextAnchor = TextAnchorEnum::W;
-		sas->setParent(console);
+		int n = console->Children.size();
+		sas->Name = std::to_string(n);
+		sas->Text = text;
+		sas->Size = SpecialVector2{ 1, 0.05 };
+		sas->Position = SpecialVector2{ 0, 0.05f * (n - 1) };
+		console->CanvasSize.y += 0.05 - (n > 20 ? 0 : 0.05);
+		console->CanvasPosition.y = console->CanvasSize.y - 1;
 	}
 
 	Object2D* debugMenu = nullptr;
@@ -3935,7 +3989,7 @@ inline namespace debug {
 		FPSquantity->Size = SpecialVector2{ 0.5, 1 };
 		FPSquantity->BackgroundTransparency = 1;
 		FPSquantity->Position = SpecialVector2{ 0.25, 0 };
-		std::ostringstream st; st << " " << typeFPS[currentFPSindex] << " "; 
+		std::ostringstream st; st << " " << typeFPS[currentFPSindex] << " ";
 		FPSquantity->SetText(currentFPSindex == 2 ? "FULL" : ((currentFPSindex == 3) ? "V-SYNC" : st.str()));
 		FPSquantity->TextSize = -1;
 		FPSquantity->TextColor = DefaultDebugColor;
@@ -4035,16 +4089,6 @@ inline namespace debug {
 		console->Position = SpecialVector2{ 0, 0.07 };
 		console->SliderColor = { 255,255,255,255 };
 		console->Name = "consoleLogs";
-		console->AddEvent(CHILD_ADDED, [](Instance* child) {
-			int n = console->Children.size();
-			std::ostringstream s; s << n;
-			TextLabel* c = static_cast<TextLabel*>(child);
-			c->Name = s.str();
-			c->Size = SpecialVector2{ 1, 0.05 };
-			c->Position = SpecialVector2{ 0, 0.05f * (n - 1) };
-			console->CanvasSize.y += 0.05 - (n > 20 ? 0 : 0.05);
-			console->CanvasPosition.y = console->CanvasSize.y - 1;
-		});
 		console->Active = true;
 		print("Debug inited");
 		for (int i = 0; i < textQueue.size(); i++) {
@@ -4171,7 +4215,7 @@ inline namespace debug {
 					TextLabel* element = new TextLabel(way);
 					element->Name = objects[i]->Name;
 					element->BackgroundTransparency = 1;
-					element->TextColor = DefaultDebugColor;
+					element->TextColor = typeColor[currentColor];
 					element->Position = SpecialVector2{ (objects.size() - i - 1) * 0.25f, 0 };
 					element->Size = SpecialVector2{ 0.2, 0.9 };
 					element->SetText(objects[i]->Name);
@@ -4181,7 +4225,7 @@ inline namespace debug {
 						TextLabel* element2 = new TextLabel(way);
 						element2->Name = ">";
 						element2->BackgroundTransparency = 1;
-						element2->TextColor = DefaultDebugColor;
+						element2->TextColor = typeColor[currentColor];
 						element2->Position = SpecialVector2{ (objects.size() - i - 1) * 0.25f + 0.2f , 0 };
 						element2->Size = SpecialVector2{ 0.05, 0.9 };
 						element2->SetText(">");
@@ -4204,7 +4248,7 @@ inline namespace debug {
 					TextLabel* element = new TextLabel(treeScroll);
 					element->Name = currentInstance->Children[i]->Name;
 					element->BackgroundTransparency = 1;
-					element->TextColor = DefaultDebugColor;
+					element->TextColor = typeColor[currentColor];
 					element->Position = SpecialVector2{ 0, (i - dec) * 0.05f };
 					element->Size = SpecialVector2{ 1, 0.05 };
 					std::ostringstream pupupupu; pupupupu << " > " << currentInstance->Children[i]->Name;
@@ -4272,7 +4316,7 @@ void UpdateHigher(Instance* StartInstance) {
 
 					if (scroll->childsRemovedInFrame.contains(id)) continue;
 
-					if (!Is2DInheritor(child)) { // experemental branch. if not working then delete
+					if (!Is2DInheritor(child)) {
 						if (getTop(child, nextDepth)) {
 							foundInThisBranch = true;
 						}
@@ -4309,14 +4353,15 @@ void UpdateHigher(Instance* StartInstance) {
 					}
 				}
 			}
-		} else {
+		}
+		else {
 			for (auto it = parent->Children.rbegin(); it != parent->Children.rend(); it++) {
 				Instance* child = *it;
 
 				int nextDepth = localDepth;
 				bool isTarget = false;
 
-				if (!Is2DInheritor(child)) { // experemental branch. if not working then delete
+				if (!Is2DInheritor(child)) {
 					if (getTop(child, nextDepth)) {
 						foundInThisBranch = true;
 					}
@@ -4354,8 +4399,6 @@ void UpdateHigher(Instance* StartInstance) {
 			}
 		}
 
-
-
 		return foundInThisBranch;
 	};
 
@@ -4370,7 +4413,7 @@ void start(Instance& StartInstance, Vector3 inf, const char* name, const char* i
 
 	winWidth = inf.x;
 	winHeight = inf.y;
-	
+
 	InitWindow(inf.x, inf.y, name);
 	if (windowMinimalSize.x != 0 and windowMinimalSize.y != 0) {
 		SetWindowMinSize(windowMinimalSize.x, windowMinimalSize.y);
@@ -4399,6 +4442,8 @@ void start(Instance& StartInstance, Vector3 inf, const char* name, const char* i
 	}
 
 	pendingImages.clear();
+
+	debug::print("Hello from Ishakao!");
 
 	while (programRunning and !WindowShouldClose()) {
 		if (IsWindowFullscreen()) ToggleFullscreen();
@@ -4432,22 +4477,24 @@ void start(Instance& StartInstance, Vector3 inf, const char* name, const char* i
 		Animate::UpdateAnimations(dt);
 		Tasks::UpdateTasks(dt);
 
-		if (previousMousePosition.x != mousePosition.x or previousMousePosition.y != mousePosition.y or sceneDirty) {
+		if ((previousMousePosition.x != mousePosition.x or previousMousePosition.y != mousePosition.y or sceneDirty)) {
 			previousMousePosition = mousePosition;
 			UpdateHigher(&StartInstance);
 		}
 
-		if (IsKeyPressed(KEY_F1) and ALLOW_FPS) { toggleFPS(&StartInstance, {125, 180, 220, 255}); }
+		if (IsKeyPressed(KEY_F1) and ALLOW_FPS) { toggleFPS(&StartInstance, { 125, 180, 220, 255 }); }
 		if (IsKeyPressed(KEY_F2) and ALLOW_DEBUG) { debug::toggleDebug(&StartInstance); }
 		if (IsKeyPressed(KEY_F3)) { std::cout << accurateFPS << std::endl; }
 
 		framesSinceStart += 1;
 
 		DrawFrame(&StartInstance);
+
+		sceneDirty = false;
 	}
 
 	/*
-	
+
 	for (int i = 0; i < StartInstance.Children.size();) {
 		Instance* child = StartInstance.Children[i];
 		Delete(child);
