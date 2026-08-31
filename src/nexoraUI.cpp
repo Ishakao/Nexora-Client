@@ -424,8 +424,8 @@ int initUpperBar() {
 			SUI_SetWindowPosition(startMouseScreen.x - relMouse.x * lastMinimizedSize.x, startMouseScreen.y - relMouse.y * lastMinimizedSize.y);
 		}
 		dragging = true;
-	}, LEFT);
-	upperBar->AddEvent(MOUSE_HOLD_END, [](Instance* t) { dragging = false; }, LEFT);
+	}, MOUSE_LEFT);
+	upperBar->AddEvent(MOUSE_HOLD_END, [](Instance* t) { dragging = false; }, MOUSE_LEFT);
 	upperBar->AddEvent(TICK, [](Instance* t) {
 		double tickCooldown = 1.0 / GetMonitorRefreshRate(GetCurrentMonitor());
 		static double currentCooldown = 0;
@@ -566,7 +566,7 @@ int initUpperBar() {
 	icon->ZIndex = 2;
 	icon->BackgroundTransparency = 1;
 	icon->setImage("app_icon");
-	icon->Overlay = FIT;
+	icon->Overlay = IMAGE_FIT;
 	icon->Position = { 0,0 };
 	icon->Size = { 0, 1 };
 	icon->SizeOFFSET.x = 50;
@@ -591,7 +591,7 @@ int initUpperBar() {
 	Exit->SizeOFFSET.x = BAR_BUTTONS_SIZE;
 	Exit->PositionOFFSET.x = -BAR_BUTTONS_SIZE;
 	Exit->BackgroundTransparency = 1;
-	Exit->Overlay = FIT;
+	Exit->Overlay = IMAGE_FIT;
 	Exit->setImage("exit");
 	Exit->ImageColor = { 255,100,100,255 };
 	Object2D* ExitButton = new Object2D(upperBar);
@@ -608,7 +608,7 @@ int initUpperBar() {
 	ExitButton->AddEvent(MOUSE_LEAVE, [ExitButton](Instance* t) { ExitButton->BackgroundTransparency = 1; });
 	ExitButton->AddEvent(MOUSE_HOLD_END, [](Instance* t) {
 		programRunning = false;
-	}, LEFT);
+	}, MOUSE_LEFT);
 
 	ImageLabel* Window = new ImageLabel(upperBar);
 	Window->Position = { 1, 0.6 };
@@ -617,7 +617,7 @@ int initUpperBar() {
 	Window->SizeOFFSET.x = BAR_BUTTONS_SIZE;
 	Window->PositionOFFSET.x = -BAR_BUTTONS_SIZE * 2 - 1;
 	Window->BackgroundTransparency = 1;
-	Window->Overlay = FIT;
+	Window->Overlay = IMAGE_FIT;
 	Window->setImage("window");
 	Window->ImageColor = { 255,255,255,255 };
 	Object2D* WindowButton = new Object2D(upperBar);
@@ -637,7 +637,7 @@ int initUpperBar() {
 			RestoreWindow();
 		else
 			MaximizeWindow();
-	}, LEFT);
+	}, MOUSE_LEFT);
 
 	ImageLabel* Hide = new ImageLabel(upperBar);
 	Hide->Position = { 1, 0.5 };
@@ -646,7 +646,7 @@ int initUpperBar() {
 	Hide->SizeOFFSET.x = BAR_BUTTONS_SIZE;
 	Hide->PositionOFFSET.x = -BAR_BUTTONS_SIZE * 3 - 2;
 	Hide->BackgroundTransparency = 1;
-	Hide->Overlay = FIT;
+	Hide->Overlay = IMAGE_FIT;
 	Hide->setImage("hide");
 	Hide->ImageColor = { 255,255,255,255 };
 	Object2D* HideButton = new Object2D(upperBar);
@@ -663,7 +663,7 @@ int initUpperBar() {
 	HideButton->AddEvent(MOUSE_LEAVE, [HideButton](Instance* t) { HideButton->BackgroundTransparency = 1; });
 	HideButton->AddEvent(MOUSE_HOLD_END, [](Instance* t) {
 		MinimizeWindow();
-	}, LEFT);
+	}, MOUSE_LEFT);
 
 	return 0;
 }
@@ -677,30 +677,6 @@ int initAuth() {
 	AuthFrame->BackgroundColor = mulColor(DEFAULT_BACKGROUND, 1.2);
 	AuthFrame->ZIndex = 15;
 
-	ImageLabel* AuthBackground = new ImageLabel(AuthFrame);
-	AuthBackground->Size = { 1.05,1.05 };
-	AuthBackground->AnchorPosition = { 0.5,0.5 };
-	AuthBackground->Position = { 0.5,0.5 };
-	AuthBackground->BackgroundTransparency = 1;
-	AuthBackground->ImageColor = DEFAULT_TEXT;
-	AuthBackground->Name = "AuthBackground";
-	AuthBackground->setImage("auth_background");
-	AuthBackground->ImageTransparency = 0.5;
-	AuthBackground->Overlay = CROP;
-	AuthBackground->AddEvent(TICK, [AuthBackground](Instance* t) {
-		static Vector2 lastMouse{};
-		Vector2 mousePos = GetMousePosition();
-
-		if (mousePos.x != lastMouse.x or mousePos.y != lastMouse.y) {
-			lastMouse = mousePos;
-			Vector2 mouseRelative = { mousePos.x / winWidth, mousePos.y / winHeight };
-			float x = 0.025f * mouseRelative.x;
-			float y = 0.025f * mouseRelative.y;
-			AuthBackground->Position.x = 0.5 - x;
-			AuthBackground->Position.y = 0.5 - y;
-		}
-	});
-
 	ScrollFrame* Scissors = new ScrollFrame(AuthFrame);
 	Scissors->BackgroundTransparency = 1;
 	Scissors->AnchorPosition = { 0.5,0.5 };
@@ -709,6 +685,7 @@ int initAuth() {
 	Scissors->Position = { 0.5, 0.585 };
 	Scissors->ScrollEnabled = false;
 	Scissors->SliderTransparency = 1;
+	Scissors->ZIndex = 16;
 
 	Object2D* SignInFrame = new Object2D(Scissors);
 	SignInFrame->BackgroundColor = mulColor(DEFAULT_BACKGROUND, 0.8);
@@ -743,18 +720,19 @@ int initAuth() {
 	SignIn->FontFace = "SegoeB";
 	SignIn->TextColor = mulColor(DEFAULT_TEXT, 0.6);
 	SignIn->Name = "SingIn";
+	SignIn->ZIndex = 3;
 	SignIn->Roundness = 0.2;
 	SignIn->Active = true;
 	SignIn->AddEvent(MOUSE_ENTER, [SignIn](Instance* t) {
 		Animate::Create(&SignIn->SizeOFFSET, 0.125f, { 170, 65 });
 		Animate::Create(&SignIn->BorderColor, 0.15f, mulColor(DEFAULT_BACKGROUND, 1.6));
 		Animate::Create(&SignIn->BackgroundColor, 0.1f, mulColor(DEFAULT_BACKGROUND, 1.2));
-	});
+		});
 	SignIn->AddEvent(MOUSE_LEAVE, [SignIn](Instance* t) {
 		Animate::Create(&SignIn->SizeOFFSET, 0.125f, { 135, 50 });
 		Animate::Create(&SignIn->BorderColor, 0.15f, mulColor(DEFAULT_BACKGROUND, 1.4));
 		Animate::Create(&SignIn->BackgroundColor, 0.1f, mulColor(DEFAULT_BACKGROUND, 1));
-	});
+		});
 
 	TextLabel* SignUp = new TextLabel(AuthFrame);
 	SignUp->Size = { 0, 0 };
@@ -769,6 +747,7 @@ int initAuth() {
 	SignUp->FontFace = "SegoeB";
 	SignUp->TextColor = mulColor(DEFAULT_TEXT, 1);
 	SignUp->Name = "SignUp";
+	SignUp->ZIndex = 3;
 	SignUp->Roundness = 0.2;
 	SignUp->Active = true;
 	SignUp->AddEvent(MOUSE_ENTER, [SignUp](Instance* t) {
@@ -791,7 +770,7 @@ int initAuth() {
 
 		Animate::Create(&SignInFrame->Position.x, 0.2f, 0.5f, Animate::Circular, Animate::Out);
 		Animate::Create(&SignUpFrame->Position.x, 0.2f, 1.6f, Animate::Circular, Animate::Out);
-	}, LEFT);
+	}, MOUSE_LEFT);
 
 	SignUp->AddEvent(MOUSE_CLICK, [SignIn, SignUp, SignInFrame, SignUpFrame](Instance* t) {
 		Animate::Create(&SignIn->TextColor, 0.125f, mulColor(DEFAULT_TEXT, 0.6));
@@ -802,7 +781,42 @@ int initAuth() {
 
 		Animate::Create(&SignInFrame->Position.x, 0.2f, -0.4f, Animate::Circular, Animate::Out);
 		Animate::Create(&SignUpFrame->Position.x, 0.2f, 0.5f, Animate::Circular, Animate::Out);
-	}, LEFT);
+	}, MOUSE_LEFT);
+
+	ImageLabel* AuthBackground = new ImageLabel(AuthFrame);
+	AuthBackground->Size = { 1.1,1.1 };
+	AuthBackground->AnchorPosition = { 0.5,0.5 };
+	AuthBackground->Position = { 0.5,0.5 };
+	AuthBackground->BackgroundTransparency = 1;
+	AuthBackground->ImageColor = DEFAULT_TEXT;
+	AuthBackground->Name = "AuthBackground";
+	AuthBackground->setImage("auth_background");
+	AuthBackground->ImageTransparency = 0.5;
+	AuthBackground->Overlay = IMAGE_CROP;
+	AuthBackground->AddEvent(TICK, [AuthBackground, Scissors, SignIn, SignUp](Instance* t) {
+		static Vector2 lastMouse{};
+		Vector2 mp = GetMouseScreenPosition();
+		Vector2 winPos = GetWindowPosition();
+		Vector2 mousePos = { mp.x - winPos.x, mp.y - winPos.y };
+
+		if (mousePos.x != lastMouse.x or mousePos.y != lastMouse.y) {
+			lastMouse = mousePos;
+			Vector2 mouseRelative = { mousePos.x / winWidth, mousePos.y / winHeight };
+			float x = std::fmin(0.05, std::fmax(-0.05, 0.025f * mouseRelative.x));
+			float y = std::fmin(0.05, std::fmax(-0.05, 0.025f * mouseRelative.y));
+			AuthBackground->Position.x = 0.5 - x;
+			AuthBackground->Position.y = 0.5 - y;
+
+			Scissors->Position.x = 0.5 - x * 0.3;
+			Scissors->Position.y = 0.585 - y * 0.3;
+
+			SignIn->Position.x = 0.5 - x * 0.2;
+			SignIn->Position.y = 0.585 - y * 0.2;
+
+			SignUp->Position.x = 0.5 - x * 0.2;
+			SignUp->Position.y = 0.585 - y * 0.2;
+		}
+	});
 
 	TextLabel* SignInInternal = new TextLabel(SignInFrame);
 	SignInInternal->Size = { 0.5, 0.12 };
@@ -832,6 +846,8 @@ int initAuth() {
 	Login->ClearOnClick = false;
 	Login->CursorSize = 2;
 	Login->AllowedSymbols = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz1234567890_";
+	Login->ClipboardPasteAllowed = false;
+	Login->ClipboardCopyAllowed = false;
 
 	TextBox* Password = new TextBox(SignInFrame);
 	Password->Size = { 0.8, 0.1 };
@@ -852,6 +868,8 @@ int initAuth() {
 	Password->ClearOnClick = false;
 	Password->CursorSize = 2;
 	Password->AllowedSymbols = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz1234567890_!+-=#$%^&*().,/\\`~[]{}";
+	Password->ClipboardPasteAllowed = false;
+	Password->ClipboardCopyAllowed = false;
 
 	ImageLabel* TextBoxEye = new ImageLabel(SignInFrame);
 	TextBoxEye->setImage("textbox_eye");
@@ -864,7 +882,7 @@ int initAuth() {
 	TextBoxEye->AddEvent(MOUSE_HOLD_END, [Password, TextBoxEye](Instance* t) {
 		Password->HideText = (Password->HideText == '\0' ? '*' : '\0');
 		TextBoxEye->ImageColor = mulColor(DEFAULT_TEXT, (Password->HideText != '\0') ? 1 : 0.8);
-	}, LEFT);
+	}, MOUSE_LEFT);
 	TextBoxEye->AddEvent(MOUSE_ENTER, [TextBoxEye](Instance* t) {
 		Animate::Create(&TextBoxEye->Size, 0.125, { 0.105, 0.105 });
 	});
@@ -977,7 +995,7 @@ int initAuth() {
 			Password->Active = false;
 			});
 		data->send();
-	}, LEFT);
+	}, MOUSE_LEFT);
 
 	/*************
 	*   Sign Up  *
@@ -1011,6 +1029,8 @@ int initAuth() {
 	Login2->ClearOnClick = false;
 	Login2->CursorSize = 2;
 	Login2->AllowedSymbols = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz1234567890_";
+	Login2->ClipboardPasteAllowed = false;
+	Login2->ClipboardCopyAllowed = false;
 
 	TextBox* Password2 = new TextBox(SignUpFrame);
 	Password2->Size = { 0.8, 0.1 };
@@ -1031,6 +1051,9 @@ int initAuth() {
 	Password2->ClearOnClick = false;
 	Password2->CursorSize = 2;
 	Password2->AllowedSymbols = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz1234567890_!+-=#$%^&*().,/\\`~[]{}";
+	Password2->ClipboardPasteAllowed = false;
+	Password2->ClipboardCopyAllowed = false;
+
 	TextBox* Password22 = new TextBox(SignUpFrame);
 	Password22->Size = { 0.8, 0.1 };
 	Password22->Position = { 0.45, 0.57 };
@@ -1038,7 +1061,6 @@ int initAuth() {
 	Password22->BackgroundColor = mulColor(DEFAULT_BACKGROUND, 1.7);
 	Password22->TextSize = -1;
 	Password22->maxSymbols = 20;
-
 	Password22->PlaceholderText = "Confirm password";
 	Password22->TextAnchor = TextAnchorEnum::W;
 	Password22->FontFace = "SegoeB";
@@ -1051,6 +1073,8 @@ int initAuth() {
 	Password22->ClearOnClick = false;
 	Password22->CursorSize = 2;
 	Password22->AllowedSymbols = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz1234567890_!+-=#$%^&*().,/\\`~[]{}";
+	Password22->ClipboardPasteAllowed = false;
+	Password22->ClipboardCopyAllowed = false;
 
 	ImageLabel* TextBoxEye2 = new ImageLabel(SignUpFrame);
 	TextBoxEye2->setImage("textbox_eye");
@@ -1064,7 +1088,7 @@ int initAuth() {
 		Password2->HideText = (Password2->HideText == '\0' ? '*' : '\0');
 		Password22->HideText = (Password22->HideText == '\0' ? '*' : '\0');
 		TextBoxEye2->ImageColor = mulColor(DEFAULT_TEXT, (Password2->HideText != '\0') ? 1 : 0.8);
-	}, LEFT);
+	}, MOUSE_LEFT);
 	TextBoxEye2->AddEvent(MOUSE_ENTER, [TextBoxEye2](Instance* t) {
 		Animate::Create(&TextBoxEye2->Size, 0.125, { 0.105, 0.105 });
 	});
@@ -1179,7 +1203,7 @@ int initAuth() {
 			Password22->Active = false;
 			});
 		data->send();
-	}, LEFT);
+	}, MOUSE_LEFT);
 
 	return 0;
 }
@@ -1216,7 +1240,7 @@ int profileUI() {
 	ProfileImage->BorderColor = mulColor(DEFAULT_BACKGROUND, 1);
 	ProfileImage->BorderThickness = 3;
 	ProfileImage->Name = "ProfileImage";
-	ProfileImage->Overlay = CROP;
+	ProfileImage->Overlay = IMAGE_CROP;
 
 	Object2D* changeImage = new Object2D(ProfileImage);
 	changeImage->Size = { 1.01,1.01 };
@@ -1327,7 +1351,7 @@ int profileUI() {
 		});
 
 		thr.detach();
-	}, LEFT);
+	}, MOUSE_LEFT);
 
 	ImageLabel* ConfirmName = new ImageLabel(profileFrame);
 	ConfirmName->PositionOFFSET = { 375, 37.5 };
@@ -1391,7 +1415,7 @@ int profileUI() {
 	ProfileName->Name = "PROFILE_NAME1";
 	ProfileName->CursorColor = mulColor(DEFAULT_TEXT, 0.9);
 	ProfileName->TextAnchor = TextAnchorEnum::W;
-	ProfileName->Type = Viewported;
+	ProfileName->Type = TEXTBOX_VIEWPORTED;
 	ProfileName->ZIndex = 20;
 	ProfileName->AddEvent(TEXT_CHANGED, [ProfileName, ConfirmName, NameLowerLine](Instance* t) {
 		updAnim();
@@ -1451,7 +1475,7 @@ int profileUI() {
 			delete[] data.first;
 			});
 		as->send();
-	}, LEFT);
+	}, MOUSE_LEFT);
 
 	new ChangedSignal(FocusedTextBox, [ProfileName, ConfirmName, NameLowerLine]() {
 		if (FocusedTextBox == ProfileName) {
@@ -1467,7 +1491,7 @@ int profileUI() {
 	NameLowerLine->Size = { 1, 1 };
 	NameLowerLine->Position = { 0, 0 };
 	NameLowerLine->BackgroundTransparency = 1;
-	NameLowerLine->Overlay = STRETCH;
+	NameLowerLine->Overlay = IMAGE_STRETCH;
 	NameLowerLine->ImageColor = DEFAULT_TEXT;
 
 	TextLabel* ProfileLogin = new TextLabel(profileFrame);
@@ -1604,7 +1628,7 @@ int generalUI() {
 	ProfileImage->ImageColor = DEFAULT_TEXT;
 	ProfileImage->Roundness = 1;
 	ProfileImage->RoundImage = true;
-	ProfileImage->Overlay = CROP;
+	ProfileImage->Overlay = IMAGE_CROP;
 	ProfileImage->PositionOFFSET.y = 20;
 	ProfileImage->BorderColor = mulColor(DEFAULT_BACKGROUND, 1.2);
 	ProfileImage->BorderThickness = 5;
@@ -1651,7 +1675,7 @@ int generalUI() {
 		});
 		ProfileButtonFull->AddEvent(MOUSE_HOLD_END, [](Instance* t) {
 			GlobalStates::UIstate = PROFILE;
-		}, LEFT);
+		}, MOUSE_LEFT);
 
 		ImageLabel* ProfileButtonImage = new ImageLabel(ProfileButtonFull);
 		ProfileButtonImage->BackgroundTransparency = 1;
@@ -1688,7 +1712,7 @@ int generalUI() {
 		});
 		SettingsButtonFull->AddEvent(MOUSE_HOLD_END, [](Instance* t) {
 			GlobalStates::UIstate = SETTINGS;
-		}, LEFT);
+		}, MOUSE_LEFT);
 
 		ImageLabel* SettingsButtonImage = new ImageLabel(SettingsButtonFull);
 		SettingsButtonImage->BackgroundTransparency = 1;
@@ -1714,7 +1738,7 @@ int generalUI() {
 	BackToGeneral->Active = true;
 	BackToGeneral->AddEvent(MOUSE_CLICK, [](Instance* t) {
 		GlobalStates::UIstate = GENERAL;
-	}, LEFT);
+	}, MOUSE_LEFT);
 
 	ImageLabel* ClientProfileButton = new ImageLabel(Background);
 	ClientProfileButton->BackgroundTransparency = 1;
@@ -1738,7 +1762,7 @@ int generalUI() {
 	});
 	ClientProfileButton->AddEvent(MOUSE_HOLD_END, [](Instance* t) {
 		GlobalStates::UIstate = LEFT_MENU;
-	}, LEFT);
+	}, MOUSE_LEFT);
 
 	ScrollFrame* ChatScroll = new ScrollFrame(Background);
 	ChatScroll->Size.y = 1;
@@ -1768,11 +1792,11 @@ int generalUI() {
 
 	static auto setFullScrollMode = [ChatScroll]() {
 		isMinimal = false;
-		};
+	};
 
 	static auto setMinimalScrollMode = [ChatScroll]() {
 		isMinimal = true;
-		};
+	};
 
 	static int backOffsetX = 0;
 
@@ -1781,19 +1805,19 @@ int generalUI() {
 			static bool key1Down = false;
 			static bool key2Down = false;
 
-			if (IsKeyPressed(KEY_DOWN)) {
+			if (IsKeyPressed(RAYLIB_FUNCTIONAL::KEY_DOWN)) {
 				key1Down = true;
 			}
 
-			if (IsKeyPressed(KEY_UP)) {
+			if (IsKeyPressed(RAYLIB_FUNCTIONAL::KEY_UP)) {
 				key2Down = true;
 			}
 
-			if (IsKeyUp(KEY_DOWN)) {
+			if (IsKeyUp(RAYLIB_FUNCTIONAL::KEY_DOWN)) {
 				key1Down = false;
 			}
 
-			if (IsKeyUp(KEY_UP)) {
+			if (IsKeyUp(RAYLIB_FUNCTIONAL::KEY_UP)) {
 				key2Down = false;
 			}
 
@@ -1930,7 +1954,7 @@ int generalUI() {
 		} else {
 			SendInfoMessage("Chat load", "Something went wrong (c1)", ERROR);
 		}
-	}, LEFT);
+	}, MOUSE_LEFT);
 
 	new ChangedSignal<bool>(Authenticated, [&]() {
 		if (Authenticated) {
@@ -1944,8 +1968,7 @@ int generalUI() {
 			anim->Completed = [authFrame]() {
 				authFrame->Visible = false;
 				};
-		}
-		else {
+		} else {
 			Object2D* generalFrame = dynamic_cast<Object2D*>(StartInstance->findChild("GeneralUI background"));
 			generalFrame->Visible = true;
 			Object2D* authFrame = dynamic_cast<Object2D*>(StartInstance->findChild("Auth Frame"));
@@ -1956,9 +1979,9 @@ int generalUI() {
 			Animate::Animation* anim = Animate::Create(&authFrame->Position.x, 0.125, 0);
 			anim->Completed = [generalFrame]() {
 				generalFrame->Visible = false;
-				};
+			};
 		}
-		});
+	});
 
 	new ChangedSignal<bool>(ChatsUpdated, [ChatsFolder, ChatScroll]() {
 		if (ChatsUpdated) {
