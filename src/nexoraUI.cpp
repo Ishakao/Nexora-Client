@@ -30,8 +30,17 @@ size_t CurrentChatID = 0;
 Object2D* settingsFrame = nullptr;
 TextBox* ChatTextBox = nullptr;
 
-static inline bool Authenticated = false;
-static inline bool ChatsUpdated = false;
+static inline std::atomic<bool> Authenticated(false);
+static inline std::atomic<bool> ChatsUpdated(false);
+static inline std::atomic<bool> UserDataUpdated(false);
+static std::mutex UserDataUpdatedMtx;
+
+void UpdateUserData() {
+	UserDataUpdatedMtx.lock();
+	UserDataUpdated.store(true);
+	UserDataUpdatedMtx.unlock();
+}
+
 unsigned long clientId = 0;
 
 std::recursive_mutex asyncDataMutex;
@@ -114,7 +123,32 @@ void SendInfoMessage(const std::string& title, const std::string& text, InfoMess
 			}
 		}
 		mtx.unlock();
-		});
+	});
+}
+
+void trim(std::string& str, char symbol = ' ') {
+	if (!str.size()) return;
+	size_t _size = str.size();
+
+	int indexLeft = 0;
+	while (indexLeft < _size - 1) {
+		if (str[indexLeft] != symbol) break;
+		indexLeft++;
+	}
+
+	int indexRight = _size - 2;
+	while (indexRight > 0) {
+		if (str[indexRight] != symbol) break;
+		indexRight--;
+	}
+
+	indexRight = _size - 2 - indexRight;
+
+	memmove((void*)str.data(), (void*)(str.data() + indexLeft), _size - 1 - indexRight);
+	memset((void*)(str.data() + _size - 1 - indexLeft - indexRight), '\0', indexLeft + indexRight);
+	str.resize(_size - indexLeft - indexRight);
+
+	str.shrink_to_fit();
 }
 
 size_t string_to_size_t(std::string s) {
@@ -137,38 +171,40 @@ std::string WstringToString(const std::wstring& wstr) {
 }
 
 void onClientPtrChanged() {
+	asyncDataMutex.lock();
 	if (*getClientPtr()) {
-			asyncDataMutex.lock();
-			dynamic_cast<TextLabel*>(StartInstance->findFirstDescendant("PROFILE_NAME"))->Text = (*getClientPtr())->userName;
-			dynamic_cast<TextLabel*>(StartInstance->findFirstDescendant("UserID"))->Text = "UID: " + std::to_string((*getClientPtr())->userID);
-			dynamic_cast<TextBox*>(StartInstance->findFirstDescendant("PROFILE_NAME1"))->SetText((*getClientPtr())->userName);
-			dynamic_cast<TextLabel*>(StartInstance->findFirstDescendant("ProfileLogin"))->Text = "@" + (*getClientPtr())->login;
+		dynamic_cast<TextLabel*>(StartInstance->findFirstDescendant("PROFILE_NAME"))->Text = (*getClientPtr())->userName;
+		dynamic_cast<TextLabel*>(StartInstance->findFirstDescendant("UserID"))->Text = "UID: " + std::to_string((*getClientPtr())->userID);
+		dynamic_cast<TextBox*>(StartInstance->findFirstDescendant("PROFILE_NAME1"))->SetText((*getClientPtr())->userName);
+		dynamic_cast<TextLabel*>(StartInstance->findFirstDescendant("ProfileLogin"))->Text = "@" + (*getClientPtr())->login;
 
-			if ((*getClientPtr())->avatar.size() <= 1) {
-				ImageLabel* ProfileImage = dynamic_cast<ImageLabel*>(StartInstance->findFirstDescendant("PROFILE_IMAGE"));
-				ProfileImage->setImage("profile");
-				ProfileImage->ImageColor = DEFAULT_TEXT;
+		if ((*getClientPtr())->avatar.size() <= 1) {
+			ImageLabel* ProfileImage = dynamic_cast<ImageLabel*>(StartInstance->findFirstDescendant("PROFILE_IMAGE"));
+			ProfileImage->setImage("profile");
+			ProfileImage->ImageColor = DEFAULT_TEXT;
 
-				ImageLabel* ProfileImage2 = dynamic_cast<ImageLabel*>(StartInstance->findFirstDescendant("ProfileImage"));
-				ProfileImage2->setImage("profile");
-				ProfileImage2->ImageColor = DEFAULT_TEXT;
-			} else {
-				auto ic = (*getClientPtr())->avatar.getIcon();
-				
-				std::vector<unsigned char> icon(ic.second);
-				memcpy(icon.data(), ic.first, ic.second);
+			ImageLabel* ProfileImage2 = dynamic_cast<ImageLabel*>(StartInstance->findFirstDescendant("ProfileImage"));
+			ProfileImage2->setImage("profile");
+			ProfileImage2->ImageColor = DEFAULT_TEXT;
+		} else {
+			auto ic = (*getClientPtr())->avatar.getIcon();
 
-				ImageLabel* ProfileImage = dynamic_cast<ImageLabel*>(StartInstance->findFirstDescendant("PROFILE_IMAGE"));
-				ProfileImage->UpdateFromMemory(".jpg", icon);
-				ProfileImage->ImageColor = { 255,255,255,255 };
+			const unsigned char* dataPtr = static_cast<const unsigned char*>(ic.first);
+			std::vector<unsigned char> icon(dataPtr, dataPtr + ic.second);
 
-				ImageLabel* ProfileImage2 = dynamic_cast<ImageLabel*>(StartInstance->findFirstDescendant("ProfileImage"));
-				ProfileImage2->UpdateFromMemory(".jpg", icon);
-				ProfileImage2->ImageColor = { 255,255,255,255 };
+			ImageLabel* ProfileImage = dynamic_cast<ImageLabel*>(StartInstance->findFirstDescendant("PROFILE_IMAGE"));
+
+			if (ProfileImage) {
+				ProfileImage->UpdateImageFromMemory(".jpg", icon);
+				ProfileImage->ImageColor = { 255, 255, 255, 255 };
 			}
 
-			asyncDataMutex.unlock();
+			ImageLabel* ProfileImage2 = dynamic_cast<ImageLabel*>(StartInstance->findFirstDescendant("ProfileImage"));
+			ProfileImage2->UpdateImageFromMemory(".jpg", icon);
+			ProfileImage2->ImageColor = { 255,255,255,255 };
 		}
+	}
+	asyncDataMutex.unlock();
 }
 
 void UPDATE_USER_DATA() {
@@ -240,7 +276,7 @@ void loadChats(const size_t chatID, std::function<void(void)> f) { // chatID == 
 			f();
 			delete[] input;
 			delete[] data.first;
-			});
+		});
 		chat->send();
 	}
 	else {
@@ -277,7 +313,7 @@ void loadChats(const size_t chatID, std::function<void(void)> f) { // chatID == 
 
 			f();
 			delete[] data.first;
-			});
+		});
 		chat->send();
 	}
 }
@@ -369,8 +405,7 @@ void changeCurrentChat(const size_t id) {
 				i++;
 			}
 		});
-	}
-	else {
+	} else {
 		loadChatsMutex.unlock();
 		loadChats(id, [id]() {
 			changeCurrentChat(id);
@@ -794,7 +829,16 @@ int initAuth() {
 	AuthBackground->ImageTransparency = 0.5;
 	AuthBackground->Overlay = IMAGE_CROP;
 	AuthBackground->AddEvent(TICK, [AuthBackground, Scissors, SignIn, SignUp](Instance* t) {
+		if (GlobalStates::UIstate != AUTH) return;
 		static Vector2 lastMouse{};
+		static float currentDT = 0.0f;
+		float needDT = 1.0f / debug::getCurrentMaxFPS();
+		currentDT += dt;
+		if (currentDT >= needDT) {
+			currentDT = 0;
+		} else {
+			return;
+		}
 		Vector2 mp = GetMouseScreenPosition();
 		Vector2 winPos = GetWindowPosition();
 		Vector2 mousePos = { mp.x - winPos.x, mp.y - winPos.y };
@@ -924,7 +968,7 @@ int initAuth() {
 		Animate::Create(&CheckLogin->TextColor, 0.1f, mulColor(DEFAULT_TEXT, 0.8));
 	});
 	CheckLogin->AddEvent(MOUSE_HOLD_END, [DataIncorrect, CheckLogin, Login, Password](Instance* t) {
-		if (Authenticated) return;
+		if (Authenticated.load()) return;
 		if (Login->GetText().empty() or Password->GetText().empty()) return;
 
 		DataIncorrect->TextTransparency = 1;
@@ -973,13 +1017,13 @@ int initAuth() {
 						id += output.first[i] - '0';
 					}
 					clientId = id;
-					Authenticated = true;
+					Authenticated.store(true);
 					loadChats(0, []() {
-						ChatsUpdated = true;
+						ChatsUpdated.store(true);
 					});
 					DataIncorrect->TextTransparency = 1;
 
-					UPDATE_USER_DATA();
+					UpdateUserData();
 				}
 				delete[]output.first;
 			}
@@ -993,7 +1037,7 @@ int initAuth() {
 			CheckLogin->Active = false;
 			Login->Active = false;
 			Password->Active = false;
-			});
+		});
 		data->send();
 	}, MOUSE_LEFT);
 
@@ -1130,7 +1174,7 @@ int initAuth() {
 		Animate::Create(&CheckLogin2->TextColor, 0.1f, mulColor(DEFAULT_TEXT, 0.8));
 	});
 	CheckLogin2->AddEvent(MOUSE_HOLD_END, [DataIncorrect2, CheckLogin2, Login2, Password2, Password22](Instance* t) {
-		if (Authenticated) return;
+		if (Authenticated.load()) return;
 		if (Login2->GetText().empty() or Password2->GetText().empty() or Password22->GetText().empty()) return;
 		if (strcmp(Password2->GetText().c_str(), Password22->GetText().c_str())) {
 			DataIncorrect2->Text = "Passwords must match";
@@ -1180,13 +1224,13 @@ int initAuth() {
 				else {
 					size_t id = string_to_size_t(output.first);
 					clientId = id;
-					Authenticated = true;
+					Authenticated.store(true);
 					loadChats(0, []() {
-						ChatsUpdated = true;
-						});
+						ChatsUpdated.store(true);
+					});
 					DataIncorrect2->TextTransparency = 1;
 
-					UPDATE_USER_DATA();
+					UpdateUserData();
 				}
 				delete[]output.first;
 			}
@@ -1274,9 +1318,13 @@ int profileUI() {
 	static std::mutex o_m;
 
 	changeImage->AddEvent(MOUSE_HOLD_END, [](Instance* t) {
-		if (o) return;
+		o_m.lock();
+		if (o) {
+			o_m.unlock();
+			return;
+		}
+		o_m.unlock();
 		std::thread thr([]() {
-			
 			o_m.lock();
 			o = true;
 			o_m.unlock();
@@ -1315,13 +1363,13 @@ int profileUI() {
 				} else {
 					std::ifstream data_file(path, std::ios::binary);
 					if (!data_file) return;
-					size = std::filesystem::file_size(file);
+					size = std::filesystem::file_size(path);
 					input = new char[size];
 					data_file.read(input, size);
 				}
 				
 				if (size > 3_mb) {
-					SendInfoMessage("File size", "Avatar size must be < 10mb", WARN);
+					SendInfoMessage("File size", "Avatar size must be < 3mb", WARN);
 					return;
 				}
 
@@ -1339,7 +1387,7 @@ int profileUI() {
 					}
 
 					delete[] output.first;
-					UPDATE_USER_DATA();
+					UpdateUserData();
 				});
 
 				data->send();
@@ -1380,7 +1428,14 @@ int profileUI() {
 	ImageLabel* NameLowerLine = new ImageLabel(ProfileName);
 
 	static auto updAnim = [ProfileName, ConfirmName, NameLowerLine]() {
-		if (ProfileName->Text == (*getClientPtr())->userName) {
+		asyncDataMutex.lock();
+		if (!*getClientPtr()) {
+			asyncDataMutex.unlock();
+			return;
+		}
+		std::string u = (*getClientPtr())->userName;
+		asyncDataMutex.unlock();
+		if (ProfileName->Text == u) {
 			ConfirmName->Active = false;
 			ConfirmName->Visible = false;
 			NameLowerLine->Visible = false;
@@ -1393,8 +1448,7 @@ int profileUI() {
 			NameLowerLine->Visible = true;
 			Animate::Create(&NameLowerLine->ImageColor, 0.125, DEFAULT_TEXT);
 			Animate::Create(&NameLowerLine->Size.x, 0.125, (float)ProfileName->size() / ProfileName->maxSymbols);
-		}
-		else {
+		} else {
 			ConfirmName->Active = false;
 			ConfirmName->Visible = false;
 			NameLowerLine->Visible = true;
@@ -1415,7 +1469,7 @@ int profileUI() {
 	ProfileName->Name = "PROFILE_NAME1";
 	ProfileName->CursorColor = mulColor(DEFAULT_TEXT, 0.9);
 	ProfileName->TextAnchor = TextAnchorEnum::W;
-	ProfileName->Type = TEXTBOX_VIEWPORTED;
+	ProfileName->Type = TEXTBOX_VIEWPORTED_X;
 	ProfileName->ZIndex = 20;
 	ProfileName->AddEvent(TEXT_CHANGED, [ProfileName, ConfirmName, NameLowerLine](Instance* t) {
 		updAnim();
@@ -1445,12 +1499,12 @@ int profileUI() {
 
 			if (!strcmp(data.first, "e1")) {
 				SendInfoMessage("Name confirm error", "Data error (e1)", WARN);
-			}
-			else if (!strcmp(data.first, "w1")) {
+			} else if (!strcmp(data.first, "w1")) {
 				SendInfoMessage("Name confirm error", "Wrong name (w1)", WARN);
-			}
-			else {
+			} else {
+				asyncDataMutex.lock();
 				(*getClientPtr())->userName = data.first;
+				asyncDataMutex.unlock();
 
 				for (Instance* o : StartInstance->getDescendants([](Instance* i) { return i->Name == "PROFILE_NAME"; })) {
 					if (o->Class == TEXTBOX) {
@@ -1581,6 +1635,59 @@ int generalUI() {
 	MessageSend->ImageTransparency = 1;
 	MessageSend->BackgroundColor = mulColor(DEFAULT_BACKGROUND, 0.95);
 	MessageSend->ImageColor = DEFAULT_TEXT;
+	MessageSend->AddEvent(MOUSE_HOLD_END, [](Instance* t) {
+		std::string text = ChatTextBox->Text;
+		std::string chat = std::to_string(CurrentChatID);
+		trim(text);
+		size_t size = text.size();
+		if (size == 0) return;
+		if (size > 8192) return;
+		
+		char* msg = new char[size+1+chat.size()+1];
+		memcpy(msg+chat.size()+1, text.data(), size + 1);
+		msg[chat.size()] = '|';
+		memcpy(msg, chat.data(), chat.size());
+
+		AsyncData* data = new AsyncData(msg, QueryType::SEND_MESSAGE, size + 1 + chat.size() + 1);
+		data->Completed([msg](std::pair<const char*, size_t> output1) {
+			if (!output1.first) {
+				delete[] msg;
+				return;
+			}
+
+			if (!strcmp(output1.first, "e1")) {
+				std::cout << "Message is too long " << msg << std::endl;
+				delete[] output1.first;
+				delete[] msg;
+				return;
+			}
+
+			if (!strcmp(output1.first, "e2")) {
+				std::cout << "Data cannot be parsed " << msg << std::endl;
+				delete[] output1.first;
+				delete[] msg;
+				return;
+			}
+
+			if (!strcmp(output1.first, "e3")) {
+				std::cout << "Chat was not found " << msg << std::endl;
+				delete[] output1.first;
+				delete[] msg;
+				return;
+			}
+
+			if (!strcmp(output1.first, "suc")) {
+				std::cout << "Successful " << msg << std::endl;
+				delete[] output1.first;
+				delete[] msg;
+				return;
+			}
+
+			delete[] msg;
+			delete[] output1.first;
+		});
+		data->send();
+	}, MOUSE_LEFT);
 
 	ChatTextBox = new TextBox(ChatBackground);
 	ChatTextBox->SizeOFFSET.y = 50;
@@ -1598,7 +1705,10 @@ int generalUI() {
 	ChatTextBox->CursorSize = 1;
 	ChatTextBox->TextColor = mulColor(DEFAULT_TEXT, 0.8);
 	ChatTextBox->AddEvent(TEXT_CHANGED, [MessageSend](Instance* t){
-		Animate::Create(&MessageSend->ImageTransparency, 0.1, ChatTextBox->GetText().size() == 0);
+		std::string text = ChatTextBox->Text;
+		trim(text);
+		size_t size = text.size();
+		Animate::Create(&MessageSend->ImageTransparency, 0.1, size == 0);
 	});
 
 	TextLabel* UpperChatName = new TextLabel(ChatBackground);
@@ -1956,7 +2066,7 @@ int generalUI() {
 		}
 	}, MOUSE_LEFT);
 
-	new ChangedSignal<bool>(Authenticated, [&]() {
+	new AtomicChangedSignal<bool>(Authenticated, [&]() {
 		if (Authenticated) {
 			dynamic_cast<Object2D*>(StartInstance->findChild("GeneralUI background"))->Visible = true;
 			Object2D* authFrame = dynamic_cast<Object2D*>(StartInstance->findChild("Auth Frame"));
@@ -1983,11 +2093,11 @@ int generalUI() {
 		}
 	});
 
-	new ChangedSignal<bool>(ChatsUpdated, [ChatsFolder, ChatScroll]() {
-		if (ChatsUpdated) {
+	new AtomicChangedSignal<bool>(ChatsUpdated, [ChatsFolder, ChatScroll]() {
+		if (ChatsUpdated.load()) {
 			loadChatsMutex.lock();
 
-			ChatsUpdated = false;
+			ChatsUpdated.store(false);
 			ChatsFolder->deleteAllChildren();
 
 			int i = 0;
@@ -2104,6 +2214,15 @@ int generalUI() {
 			};
 			break;
 		}
+		}
+	});
+
+	new AtomicChangedSignal<bool>(UserDataUpdated, []() {
+		if (UserDataUpdated.load()) {
+			UserDataUpdatedMtx.lock();
+			UPDATE_USER_DATA();
+			UserDataUpdatedMtx.unlock();
+			UserDataUpdated.store(false);
 		}
 	});
 
