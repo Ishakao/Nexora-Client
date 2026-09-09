@@ -12,7 +12,7 @@ using RAYLIB_FUNCTIONAL::DrawRectangle;
 class GraphBuilder : public Object2D {
 	constexpr static const char* DefaultName = "GraphBuilder";
 	constexpr static InstanceType DefaultClass = GRAPHBUILDER;
-	constexpr static float textureAspect = 1.1f;
+	constexpr static float textureAspect = 1.1;
 
 	class GraphSequence {
 	public:
@@ -110,8 +110,8 @@ class GraphBuilder : public Object2D {
 
 						Rectangle rec = { (GraphRealPos.x + i * (sizeAfterSpacingX + Spacing)), (GraphRealPos.y + (GraphRealSize.y - height)), sizeAfterSpacingX, height };
 						
-						if (Roundness) {
-							DrawRectangleRounded(rec, Roundness, 10, seq->color);
+						if (ColumnsRoundness) {
+							DrawRectangleRounded(rec, ColumnsRoundness, 10, seq->color);
 						} else {
 							DrawRectangle(rec.x, rec.y, rec.width, rec.height, seq->color);
 						}
@@ -192,15 +192,17 @@ class GraphBuilder : public Object2D {
 	bool lSMM = false;
 	bool lIX = false;
 	bool lIY = false;
+	bool FilterChanged = true;
 	OffsetScale lastLeft = { 0,0 };
+	Vector2 lastLeftFull = { 0,0 };
 	long double lastMin = 999999999;
 	long double lastMax = -999999999;
 
 	long double minimalGraphValue = 999999999;
 	long double maximalGraphValue = -999999999;
 
-	std::function<std::string(long double)> textFilterMin = [](long double v) { return std::to_string(v); };
-	std::function<std::string(long double)> textFilterMax = [](long double v) { return std::to_string(v); };
+	std::function<std::string(long double)> textFilterMin = [](long double v) { return std::to_string((long)v); };
+	std::function<std::string(long double)> textFilterMax = [](long double v) { return std::to_string((long)v); };
 
 	void updateGlobalMinMax() {
 		long double mi = 999999999;
@@ -360,26 +362,28 @@ public:
 		return 0;
 	}
 
-	std::vector<long double> getSequenceValues(size_t id) const {
+	const std::vector<long double>& getSequenceValues(size_t id) const {
 		auto it = sequences.find(id);
 		if (it != sequences.end()) {
 			return it->second->sequence;
 		}
 
-		return {};
+		SIMPLEUI_THROW(std::string("Sequence with id ") + std::to_string(id) + " was not found");
 	}
 
 	void minimalValueToTextFunction(std::function<std::string(long double)> f) {
 		textFilterMin = f;
+		FilterChanged = true;
 	}
 
 	void maximalValueToTextFunction(std::function<std::string(long double)> f) {
 		textFilterMax = f;
+		FilterChanged = true;
 	}
 
 	GraphDisplayType GraphType = GraphDisplayType::GRAPH_LINEAR;
 	int Spacing = 0; // Spacing between rectangles in GRAPH_COLUMNAR graph
-	float Roundness = 0; // Roundness of rectangles in GRAPH_COLUMNAR graph (0-1)
+	float ColumnsRoundness = 0; // Roundness of rectangles in GRAPH_COLUMNAR graph (0-1)
 	size_t ColumnarDisplayID = 0; // ID of sequence which will be shown on graph (only on columnar graph)
 
 	OffsetScale SizeOfLeftInfo = { 0, 0 }; // Size by x { offset, scale } of minimal and maximal values on graph. Set {0, 0} or leave it default to not display values
@@ -404,9 +408,9 @@ public:
 				updateGlobalMinMax();
 			}
 
-			bool conditionToUpdate = (GraphDirty) or (Spacing != lS) or (Roundness != lR) or (ColumnarDisplayID != lC) or (GraphType != lG) or (lIX != IndependentValuesX) or (lIY != IndependentValuesY);
+			bool conditionToUpdate = (GraphDirty) or (Spacing != lS) or (ColumnsRoundness != lR) or (ColumnarDisplayID != lC) or (GraphType != lG) or (lIX != IndependentValuesX) or (lIY != IndependentValuesY);
 			lS = Spacing;
-			lR = Roundness;
+			lR = ColumnsRoundness;
 			lC = ColumnarDisplayID;
 			lG = GraphType;
 			lIX = IndependentValuesX;
@@ -427,15 +431,17 @@ public:
 				updateTexture();
 			}
 
-			Vector2 leftSize = { SizeOfLeftInfo.Offset + SizeOfLeftInfo.Scale * RealSize.x, RealSize.y / 4 };
-			bool conditionToUpdateMin = lastMin != minimalGraphValue or FontFace.isChanged() or lastLeft.Offset != SizeOfLeftInfo.Offset or lastLeft.Scale != SizeOfLeftInfo.Scale;
-			bool conditionToUpdateMax = lastMax != maximalGraphValue or FontFace.isChanged() or lastLeft.Offset != SizeOfLeftInfo.Offset or lastLeft.Scale != SizeOfLeftInfo.Scale;
+			Vector2 leftSizeFull = { SizeOfLeftInfo.Offset + SizeOfLeftInfo.Scale * RealSize.x, RealSize.y / 4 };
+			bool bothCondition = FilterChanged or (lastLeftFull.x != leftSizeFull.x or lastLeftFull.y != leftSizeFull.y) or FontFace.isChanged() or lastLeft.Offset != SizeOfLeftInfo.Offset or lastLeft.Scale != SizeOfLeftInfo.Scale;
+			bool conditionToUpdateMin = lastMin != minimalGraphValue or bothCondition;
+			bool conditionToUpdateMax = lastMax != maximalGraphValue or bothCondition;
+
+			FilterChanged = false;
 
 			if (!(SizeOfLeftInfo.Scale == 0 and SizeOfLeftInfo.Offset == 0)) {
 				if (!cachedMin.id or (cachedMin.texture.width < textureSizeMin.x or cachedMin.texture.height < textureSizeMin.y)) {
 					updateMinTexture(true);
-				}
-				else if (conditionToUpdateMin) {
+				} else if (conditionToUpdateMin) {
 					updateMinTexture();
 				}
 			}
@@ -443,8 +449,7 @@ public:
 			if (!(SizeOfLeftInfo.Scale == 0 and SizeOfLeftInfo.Offset == 0)) {
 				if (!cachedMax.id or (cachedMax.texture.width < textureSizeMax.x or cachedMax.texture.height < textureSizeMax.y)) {
 					updateMaxTexture(true);
-				}
-				else if (conditionToUpdateMax) {
+				} else if (conditionToUpdateMax) {
 					updateMaxTexture();
 				}
 			}
@@ -452,6 +457,7 @@ public:
 			FontFace.restate();
 			GraphDirty = false;
 			lastLeft = SizeOfLeftInfo;
+			lastLeftFull = leftSizeFull;
 			lastMin = minimalGraphValue;
 			lastMax = maximalGraphValue;
 
@@ -469,7 +475,7 @@ public:
 			*/
 
 			Rectangle sourceRec = { 0.0f, (float)(cachedTexture.texture.height - textureSize.y), (float)textureSize.x, -(float)textureSize.y };
-			Rectangle destRec = { RealPos.x + leftSize.x, RealPos.y, (float)RealSize.x - leftSize.x, (float)RealSize.y };
+			Rectangle destRec = { RealPos.x + leftSizeFull.x, RealPos.y, (float)RealSize.x - leftSizeFull.x, (float)RealSize.y };
 
 			Rectangle sourceRecMin = { 0.0f, (float)(cachedMin.texture.height - textureSizeMin.y), (float)textureSizeMin.x, -(float)textureSizeMin.y };
 			Rectangle destRecMin = { RealPos.x + textParamsMin.x, RealPos.y + RealSize.y * 0.75 + textParamsMin.y, textureSizeMin.x, textureSizeMin.y };
@@ -494,6 +500,20 @@ public:
 		}
 	}
 
+	GraphBuilder* Clone() const override {
+		GraphBuilder* i = new GraphBuilder(*this);
+		i->Parent = nullptr;
+		i->Children.clear();
+		i->cachedTexture.id = 0;
+		i->cachedMin.id = 0;
+		i->cachedMax.id = 0;
+		for (Instance* c : Children) {
+			c->Clone()->setParent(i);
+		}
+
+		return i;
+	}
+
 	GraphBuilder(bool a) : Object2D(a) { Name = DefaultName; Class = DefaultClass; };
 	GraphBuilder(Instance* p) : Object2D(p) { Name = DefaultName; Class = DefaultClass; }
 	~GraphBuilder() {
@@ -510,4 +530,138 @@ public:
 		}
 	}
 	GraphBuilder() = delete;
+};
+
+class ToggleSwitcher : public Object2D {
+	constexpr static const char* DefaultName = "ToggleSwitcher";
+	constexpr static InstanceType DefaultClass = TOGGLESWITCHER;
+
+	bool Value = false;
+	float currentSliderPos = 0;
+	std::function<void(bool)> func = [](bool _) {};
+
+	void _setValue(bool v) {
+		Value = v;
+		func(Value);
+		if (AnimationSpeed) {
+			Animate::Create(&currentSliderPos, AnimationSpeed, (Value ? 1 : 0), AnimationFunction, AnimationEase);
+		} else {
+			currentSliderPos = (Value ? 1 : 0);
+		}
+	}
+
+	void checkClick() {
+		if (Enabled and Active and IsMouseButtonPressed(ButtonType) and pointInObject(mousePosition)) {
+			bool canBePressed = (
+				EnterEventCondition == SUI_EEC::EEC_DEFAULT ? this == higherObject :
+				(EnterEventCondition == SUI_EEC::EEC_EVERY_ENTER ? true :
+					EnterEventCondition == SUI_EEC::EEC_IF_DESCENDANT_HIGHER ? ((higherObject == this and higherObject != nullptr) or (higherObject and higherObject != this and higherObject->isDescendantOf(this))) : false)
+				);
+
+			if (canBePressed) {
+				if (ClickOnSlider) {
+					float RealBallPosX = RealPos.x + (RealSize.x - RealSize.y) * currentSliderPos;
+					Rectangle rec = { RealBallPosX + SliderBorderThickness, RealPos.y + SliderBorderThickness, RealSize.y - SliderBorderThickness * 2, RealSize.y - SliderBorderThickness * 2 };
+
+					float size = RealSize.y - SliderBorderThickness * 2.0f;
+					float halfSize = size / 2.0f;
+					float r = Roundness * halfSize;
+
+					float cx = RealBallPosX + SliderBorderThickness + halfSize;
+					float cy = RealPos.y + SliderBorderThickness + halfSize;
+
+					float dx = std::abs(mousePosition.x - cx);
+					float dy = std::abs(mousePosition.y - cy);
+
+					float diffX = dx - halfSize + r;
+					float diffY = dy - halfSize + r;
+
+					bool isHovered = (dx <= halfSize and dy <= halfSize) and ((diffX <= 0.0f or diffY <= 0.0f) or (diffX * diffX + diffY * diffY <= r * r));
+
+					if (!isHovered) return;
+				}
+
+				_setValue(!Value);
+			}
+		}
+	}
+public:
+	float AnimationSpeed = 0.3; // 0 means instant toggle
+	bool Enabled = true; // Allows user to click
+	bool ClickOnSlider = false; // true means click will toggle value only if click on slider | false means any on-object click will toggle value
+	Animate::Function AnimationFunction = Animate::Linear;
+	Animate::Ease AnimationEase = Animate::In;
+	MouseButtonType ButtonType = MouseButtonType::MOUSE_LEFT; // Which button click will toggle switcher
+	Color SliderColor = { 130,130,130,255 };
+	Color SliderBorderColor = { 0,0,0,255 };
+	float SliderBorderTransparency = 0;
+	float SliderTransparency = 0;
+	int SliderBorderThickness = 0;
+
+	bool getValue() const {
+		return Value;
+	}
+
+	void setValue(bool v) {
+		_setValue(v);
+	}
+
+	void onToggle(std::function<void(bool)> f) {
+		func = f;
+	}
+
+	void Draw() override {
+		if (Visible) {
+			if (RealPos.x + RealSize.x + BorderThickness < 0
+				or RealPos.x - RealSize.x - BorderThickness > winWidth
+				or RealPos.y + RealSize.y + BorderThickness < 0
+				or RealPos.y - RealSize.y - BorderThickness > winHeight) {
+				return;
+			}
+
+			Object2D::Draw();
+
+			float RealBallPosX = RealPos.x + (RealSize.x - RealSize.y) * currentSliderPos;
+			DrawRectangleRounded({ RealBallPosX + SliderBorderThickness, RealPos.y + SliderBorderThickness, RealSize.y - SliderBorderThickness * 2, RealSize.y - SliderBorderThickness * 2 }, Roundness, Segments, { SliderColor.r, SliderColor.g, SliderColor.b, (unsigned char)(SliderColor.a * (1 - SliderTransparency)) });
+			
+			if (SliderBorderThickness) {
+				DrawRectangleRoundedLinesEx({ RealBallPosX + SliderBorderThickness, RealPos.y + SliderBorderThickness, RealSize.y - SliderBorderThickness * 2, RealSize.y - SliderBorderThickness * 2 }, Roundness, Segments, SliderBorderThickness,{ SliderBorderColor.r, SliderBorderColor.g, SliderBorderColor.b, (unsigned char)(SliderBorderColor.a * (1 - SliderBorderTransparency)) });
+			}
+		}
+	}
+
+	void Update() override {
+		if (lastUpdateFrame == framesSinceStart) return;
+		lastUpdateFrame = framesSinceStart;
+
+		RelativeSCalculated = false;
+		RelativePCalculated = false;
+		if (!Visible) return;
+
+		SameUpdate();
+
+		if (updateChildrenZIndex) {
+			updateChildren(this);
+		}
+
+		eventHandler();
+		getRealObject2Dsize();
+		getRealObject2Dposition();
+
+		checkClick();
+
+		Draw();
+
+		for (int i = 0; i < Children.size(); i++) {
+			Instance* child = Children[i];
+			child->Update();
+		}
+	}
+	
+	ToggleSwitcher(bool a) : Object2D(a) { Name = DefaultName; Class = DefaultClass; Roundness = 1; Active = true; };
+	ToggleSwitcher(Instance* p) : Object2D(p) { Name = DefaultName; Class = DefaultClass; Roundness = 1; Active = true; };
+	~ToggleSwitcher() {
+
+	}
+	ToggleSwitcher() = delete;
 };
