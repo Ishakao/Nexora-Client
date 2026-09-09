@@ -18,21 +18,24 @@
 // A few CPU optimizations																						//
 // Spacial Grid optimization for ScrollFrame (millions of objects with thousands of FPS)					    //
 // TextBox input can be on any language (any UTF-8 character)													//
-// TextBox now supports clipboard and text highlighting															//
+// TextBox now supports clipboard and Y viewport																//
+// Optimizated position and size calculate functions															//
 //																												//
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-// ДОДЕЛАТЬ СТРЕЛКИ ВВЕРХ И ВНИЗ У ТЕКСТБОКС
-// СДЕЛАТЬ В ТЕКСТБОКСЕ ВЬЮПОРТ ДЛЯ Y
+#pragma once
 
-#define SIMPLEUI_INCLUDE_EXTENSION // Extension for simpleUI. Contains additional unnecesary 2D objects (GraphBuilder, !ToggleSwitcher, !CheckBox, !MultiCheckBox, !ComboBox, !ProgressBar, !DropdownBox)
+#define _CRT_SECURE_NO_WARNINGS
+#include <cstdarg>
+#include <cstring>
+
+#define SIMPLEUI_INCLUDE_EXTENSION // Extension for simpleUI. Contains additional unnecesary 2D objects (GraphBuilder, ToggleSwitcher, !CheckBox, !MultiCheckBox, !ComboBox, !ProgressBar, !DropdownBox)
 // IF YOU DON'T NEED SIMPLEUI EXTENSION THEN USE "#define EXCLUDE_SIMPLEUI_EXTENSION" BEFORE INCLUDING simpleUI.h
 
-#pragma once
 #ifdef _WIN32
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #endif
-#define _CRT_SECURE_NO_WARNINGS
+
 #include <stb_image_write.h>
 
 namespace RAYLIB_FUNCTIONAL {
@@ -146,6 +149,8 @@ using RAYLIB_FUNCTIONAL::KEY_LEFT_CONTROL;
 using RAYLIB_FUNCTIONAL::KEY_DELETE;
 using RAYLIB_FUNCTIONAL::KEY_LEFT;
 using RAYLIB_FUNCTIONAL::KEY_RIGHT;
+using RAYLIB_FUNCTIONAL::KEY_UP;
+using RAYLIB_FUNCTIONAL::KEY_DOWN;
 using RAYLIB_FUNCTIONAL::KEY_NULL;
 using RAYLIB_FUNCTIONAL::KEY_F1;
 using RAYLIB_FUNCTIONAL::KEY_F2;
@@ -169,8 +174,37 @@ using RAYLIB_FUNCTIONAL::SHADER_UNIFORM_VEC4;
 #include <filesystem>
 #include <fstream>
 #include <mutex>
+#include <type_traits>
 
+template<typename T, typename = void>
+struct is_streamable : std::false_type {};
+
+template<typename T>
+struct is_streamable<T, std::void_t<decltype(std::declval<std::ostream&>() << std::declval<const T&>())>> : std::true_type {};
+
+template<typename T>
+inline constexpr bool is_streamable_v = is_streamable<T>::value;
+
+template<typename T>
+void SIMPLEUI_THROW_WITH_INFO(const T& v, long line, const char* file) {
+	if constexpr (is_streamable_v<T>) {
+		std::cerr << "Throw: _" << v << "_ on line " << __LINE__ << " (" << __FILE__ << ")" << std::endl;
+	} else {
+		std::cerr << "Throw (unstreamable | " << &v << " | size: " << sizeof(T) << ") on line " << std::to_string(__LINE__) << " (" << __FILE__ << ")" << std::endl;
+	}
+	throw(1);
+}
+
+#define SIMPLEUI_THROW(x) SIMPLEUI_THROW_WITH_INFO(x, __LINE__, __FILE__);
+
+class TextLabel;
+class Instance;
 class Object2D;
+class TextBox;
+class ImageLabel;
+class ScrollFrame;
+class TextureLabel;
+class LineEx;
 
 void updateObject2DVector(Object2D*);
 
@@ -240,7 +274,7 @@ struct SpecialVector2 {
 		return { x.n, y.n };
 	}
 
-	SpecialVector2& operator=(const Vector2& other) {
+	SpecialVector2& operator=(const SpecialVector2& other) {
 		if (alarmWhenChanged and (x.n != other.x or y.n != other.y)) {
 			alarmWhenChanged = false;
 			x = other.x;
@@ -390,8 +424,7 @@ inline void createFont(const char* name, std::string path, int size) {
 		GenTextureMipmaps(&ft.texture);
 		SetTextureFilter(ft.texture, TEXTURE_FILTER_TRILINEAR);
 		Fonts.emplace(name, ft);
-	}
-	else {
+	} else {
 		UnloadFont(ft);
 	}
 }
@@ -622,6 +655,40 @@ public:
 	~ChangedSignal() {
 		if (!LastValue) return;
 		delete LastValue;
+	}
+};
+
+template <typename T>
+class AtomicChangedSignal : IChangedSignal {
+public:
+	std::string SignalClass = "~";
+
+	void Update() {
+		if (SignalPTR.load() != *LastValue.load()) {
+			Callback();
+			delete LastValue.load();
+			LastValue.store(new T(SignalPTR.load()));
+		}
+	}
+private:
+	std::atomic<T>& SignalPTR = nullptr;
+	std::atomic<T*> LastValue;
+	std::function<void(void)> Callback;
+public:
+	void Disconnect() {
+		auto z = find(ActiveSignals.begin(), ActiveSignals.end(), this);
+		if (z != ActiveSignals.end()) ActiveSignals.erase(z);
+		delete this;
+	}
+
+	AtomicChangedSignal() = delete;
+	AtomicChangedSignal(std::atomic<T>& p, std::function<void(void)> func) : SignalPTR(p), Callback(func), SignalClass(typeid(T).name()) {
+		ActiveSignals.push_back(this);
+		LastValue.store(new T(p.load()));
+	}
+	~AtomicChangedSignal() {
+		if (!LastValue.load()) return;
+		delete LastValue.load();
 	}
 };
 
@@ -902,15 +969,6 @@ inline Vector3 getTextCFrame(const char* text, Font font, Rectangle rec, TextAnc
 	return { (float)endX, (float)endY, (float)endSize };
 }
 
-class TextLabel;
-class Instance;
-class Object2D;
-class TextBox;
-class ImageLabel;
-class ScrollFrame;
-class TextureLabel;
-class LineEx;
-
 inline TextBox* FocusedTextBox = nullptr;
 inline Object2D* PreviousHigherObject = nullptr;
 inline Object2D* higherObject = nullptr;
@@ -921,7 +979,7 @@ inline std::unordered_map<Instance*, long> deletedObjectsByPtr;
 enum InstanceType : int {
 	INSTANCE = 0,
 
-	OBJECT2D,
+	OBJECT2D = 10,
 	TEXTLABEL,
 	TEXTBOX,
 	IMAGELABEL,
@@ -929,7 +987,7 @@ enum InstanceType : int {
 	TEXTURELABEL,
 	LINEEX,
 
-	STRING_VALUE,
+	STRING_VALUE = 30,
 	INT_VALUE,
 	BOOL_VALUE,
 	FLOAT_VALUE,
@@ -938,15 +996,18 @@ enum InstanceType : int {
 	VECTOR2_VALUE,
 	COLOR_VALUE,
 
-	FOLDER,
+	FOLDER = 40,
 
 	// Additional classes from SUIextension.h
-	GRAPHBUILDER,
+#ifndef EXCLUDE_SIMPLEUI_EXTENSION
+	GRAPHBUILDER = 100,
 	TOGGLESWITCHER,
 	CHECKBOX,
 	MULTICHECKBOX,
 	COMBOBOX,
+	DROPBOX,
 	PROGRESSBAR
+#endif
 };
 
 Instance* getAncestorWhichParentIsScrollFrame(Instance* ptr);
@@ -1018,13 +1079,13 @@ class Instance {
 protected:
 	size_t lastUpdateFrame = 0;
 public:
+	bool changedPosOrSizeFrame = true;
 	const long uniqueID = -1;
 	std::unordered_map<long, Instance*> childsAddedInFrame;
 	std::unordered_map<long, Instance*> childsRemovedInFrame;
+	void AddEvent(EventType t, InstanceCallback f, MouseButtonType m);
 private:
 	std::vector<std::pair<EventType, InstanceCallback>> events;
-
-	void AddEvent(EventType t, InstanceCallback f, MouseButtonType m);
 public:
 	bool hasEvent(EventType t) const {
 		for (auto& [type, _] : events) {
@@ -1086,6 +1147,8 @@ public:
 			ptr->updateChildrenZIndex = true;
 			ptr->childsAddedInFrame.insert({ this->uniqueID, this });
 		}
+
+		changedPosOrSizeFrame = true;
 	}
 
 	Instance* findChild(const std::string& name) const {
@@ -1239,6 +1302,8 @@ public:
 		}
 
 		eventHandler();
+
+		if (Parent and Parent->changedPosOrSizeFrame) changedPosOrSizeFrame = true;
 
 		for (int i = 0; i < Children.size(); i++) {
 			Instance* child = Children[i];
@@ -1436,6 +1501,8 @@ protected:
 
 		childsRemovedInFrame.clear();
 		childsAddedInFrame.clear();
+		changedPosOrSizeFrame = false;
+		if (Parent and Parent->changedPosOrSizeFrame) changedPosOrSizeFrame = true;
 	}
 
 	void eventHandler();
@@ -1469,7 +1536,7 @@ public:
 	SpecialVector2 AnchorPosition{ 0,0,this };
 
 	float BackgroundTransparency{};
-	Color BackgroundColor = { 0,0,0,255 };
+	Color BackgroundColor = { 255,255,255,255 };
 	bool Visible = true;
 
 	float Roundness = 0.0f;
@@ -1482,7 +1549,9 @@ public:
 	int ZIndex = 0;
 	bool Active = false;
 
-	void getRealObject2Dsize() {
+	void getRealObject2Dsize(bool forced=false) {
+		if (!changedPosOrSizeFrame and !forced) return;
+
 		SpecialVector2 sizePx = {};
 		Object2D* self = this;
 		Instance* current = Parent;
@@ -1509,8 +1578,9 @@ public:
 		RelativeSize = SpecialVector2{ sizePx.x / winWidth, sizePx.y / winHeight };
 	}
 
-	void getRealObject2Dposition() {
-		if (!RelativeSCalculated) getRealObject2Dsize();
+	void getRealObject2Dposition(bool forced=false) {
+		if (!changedPosOrSizeFrame and !forced) return;
+		if (!RelativeSCalculated) getRealObject2Dsize(true);
 
 		SpecialVector2 posPx = { 0.0f, 0.0f };
 		SpecialVector2 sizePx = RealSize;
@@ -1530,8 +1600,8 @@ public:
 			if (!Is2DInheritor(current)) { current = current->Parent; continue; }
 
 			Object2D* obj = static_cast<Object2D*>(current);
-			if (!obj->RelativeSCalculated) obj->getRealObject2Dsize();
-			if (!obj->RelativePCalculated) obj->getRealObject2Dposition();
+			if (!obj->RelativeSCalculated) obj->getRealObject2Dsize(true);
+			if (!obj->RelativePCalculated) obj->getRealObject2Dposition(true);
 
 			SpecialVector2 parentSizePx = obj->RealSize;
 
@@ -1624,8 +1694,7 @@ public:
 					scrRP.y > pos.y or scrRP.y + scrRS.y < pos.y) {
 					return false;
 				}
-			}
-			else {
+			} else {
 				if (pos.x >= RealPos.x and pos.x <= RealPos.x + RealSize.x and pos.y >= RealPos.y and pos.y <= RealPos.y + RealSize.y) return true;
 			}
 		}
@@ -1635,7 +1704,7 @@ public:
 		return false;
 	}
 
-	bool MouseEntered = false;
+	bool MouseEntered = false; // works with MOUSE_ENTER MOUSE_LEAVE events
 
 	void AddEvent(EventType t, InstanceCallback f, MouseButtonType m = MouseButtonType::MOUSE_NONE);
 
@@ -1653,9 +1722,9 @@ public:
 			updateChildren(this);
 		}
 
+		eventHandler();
 		getRealObject2Dsize();
 		getRealObject2Dposition();
-		eventHandler();
 		Draw();
 
 		for (int i = 0; i < Children.size(); i++) {
@@ -2173,9 +2242,9 @@ public:
 			Direction = 'Y';
 		}
 
+		eventHandler();
 		getRealObject2Dsize();
 		getRealObject2Dposition();
-		eventHandler();
 
 		bool force = false;
 
@@ -2524,7 +2593,9 @@ public:
 
 enum TextBoxType {
 	TEXTBOX_RESIZING = 0,
-	TEXTBOX_VIEWPORTED
+	TEXTBOX_VIEWPORTED_X,
+	TEXTBOX_VIEWPORTED_Y,
+	TEXTBOX_VIEWPORTED_XY,
 };
 
 enum TextBoxNextLine {
@@ -2578,7 +2649,7 @@ class TextBox : public Object2D {
 
 	std::vector<int> charOffsets;
 	int lines = 0;
-	Vector2 highlightedIndexes{ -1,-1 }; // -1 in any slot - text not highlighted
+	Vector2 highlightedIndexes{ -1,-1 };
 	Vector3 textParams{};
 	RenderTexture2D cachedText;
 	TextBox* lastFocused = nullptr;
@@ -2589,13 +2660,12 @@ class TextBox : public Object2D {
 	SpecialVector2 lastNewSize{};
 	TextBoxType lastType = TextBoxType::TEXTBOX_RESIZING;
 	int lastCursorIndex = -1;
-	float viewportPosition = 0;
 
 	void updateTextParams() {
-		if (Type == TextBoxType::TEXTBOX_VIEWPORTED) {
+		if (Type != TextBoxType::TEXTBOX_RESIZING) {
 			textParams.y = 0;
 			textParams.x = 0;
-			textParams.z = RealSize.y;
+			textParams.z = std::fmin(RealSize.y, ((TextSize > 0) ? TextSize : RealSize.y));
 		}
 		else {
 			if (Text != "") {
@@ -2617,20 +2687,22 @@ class TextBox : public Object2D {
 
 		if (Text != "") {
 			newSize = MeasureTextEx(getFont(!FontFace), Text.c_str(), textParams.z, Spacing);
-		}
-		else {
+		} else {
 			if (CursorIndex == -1 or FocusedTextBox != this) {
 				newSize = MeasureTextEx(getFont(!FontFace), PlaceholderText.c_str(), textParams.z, Spacing);
 			}
 		}
 
-		if (lastNewSize.x < newSize.x or lastNewSize.y < newSize.y) {
+		float reqX = (Type != TextBoxType::TEXTBOX_RESIZING) ? std::max(newSize.x, RealSize.x) : newSize.x;
+		float reqY = (Type != TextBoxType::TEXTBOX_RESIZING) ? std::max(newSize.y, RealSize.y) : newSize.y;
+
+		if (lastNewSize.x < reqX or lastNewSize.y < reqY) {
 			if (cachedText.id != 0) {
 				UnloadRenderTexture(cachedText);
 			}
 
-			cachedText = LoadRenderTexture(newSize.x * TextTextureUpdateAspect, newSize.y * TextTextureUpdateAspect);
-			lastNewSize = SpecialVector2{ newSize.x * TextTextureUpdateAspect, newSize.y * TextTextureUpdateAspect };
+			cachedText = LoadRenderTexture(reqX * TextTextureUpdateAspect, reqY * TextTextureUpdateAspect);
+			lastNewSize = SpecialVector2{ reqX * TextTextureUpdateAspect, reqY * TextTextureUpdateAspect };
 		}
 
 		bool hadClip = !clipStack.empty();
@@ -2648,8 +2720,7 @@ class TextBox : public Object2D {
 			std::string t;
 			if (HideText == '\0') {
 				t = Text;
-			}
-			else {
+			} else {
 				for (int i = 0; i < charOffsets.size() - 1; i++) {
 					t += HideText;
 				}
@@ -2660,8 +2731,7 @@ class TextBox : public Object2D {
 			}
 
 			DrawTextEx(getFont(FontFace), t.c_str(), { 0,0 }, textParams.z, Spacing, { 255,255,255,255 });
-		}
-		else {
+		} else {
 			lines = 0;
 			if (CursorIndex == -1 or FocusedTextBox != this) {
 				DrawTextEx(getFont(FontFace), PlaceholderText.c_str(), { 0,0 }, textParams.z, Spacing, { 255,255,255,255 });
@@ -2689,10 +2759,13 @@ public:
 	char HideText = '\0';
 	bool ClearOnClick = true;
 	TextBoxNextLine EnterInputCondition = TextBoxNextLine::TEXTBOX_NEXTLINE_ENTER;
-	bool ClipboardPasteAllowed = true; // Paste not secured from allowed and disallowed symbols
+	bool ClipboardPasteAllowed = true;
 	bool ClipboardCopyAllowed = true;
 	std::function<bool(const std::string&)> ClipboardPasteCondition;
 	bool TextHighlightAllowed = true;
+	SpecialVector2 viewportPosition{};
+	bool CanType = true;
+	bool CanClick = true;
 
 	int CursorSize = 3;
 	TextBoxType Type = TextBoxType::TEXTBOX_RESIZING;
@@ -2712,30 +2785,35 @@ public:
 
 		if (updateCondition1 or lastType != Type or cachedText.id == 0 or lastHideText != HideText or lastParams.x != textParams.x or lastParams.y != textParams.y or lastParams.z != textParams.z or ((FocusedTextBox == this and lastFocused != this) or (lastFocused == this and FocusedTextBox != this))) {
 			updateTexture();
-		}
-		else if (Text.isChanged()) {
+		} else if (Text.isChanged()) {
 			updateTexture();
-		}
-		else {
+		} else {
 			if (lastRealSize.x != RealSize.x or lastRealSize.y != RealSize.y) {
 				updateTextParams();
 				if (Text == "") {
 					newSize = MeasureTextEx(getFont(!FontFace), PlaceholderText.c_str(), textParams.z, Spacing);
-				}
-				else {
+				} else {
 					newSize = MeasureTextEx(getFont(!FontFace), Text.c_str(), textParams.z, Spacing);
 				}
 			}
 		}
+
+		float viewX = (Type == TextBoxType::TEXTBOX_VIEWPORTED_X or Type == TextBoxType::TEXTBOX_VIEWPORTED_XY) ? viewportPosition.x : 0.0f;
+		float viewY = (Type == TextBoxType::TEXTBOX_VIEWPORTED_Y or Type == TextBoxType::TEXTBOX_VIEWPORTED_XY) ? viewportPosition.y : 0.0f;
 
 		if (textParams.z > 1) {
 			if (cachedText.id == 0) {
 				updateTexture();
 			}
 
-			SpecialVector2 sizeToDraw = (Type == TextBoxType::TEXTBOX_VIEWPORTED) ? RealSize : newSize;
+			SpecialVector2 sizeToDraw = (Type != TextBoxType::TEXTBOX_RESIZING) ? RealSize : newSize;
 
-			Rectangle sourceRec = { (Type == TextBoxType::TEXTBOX_VIEWPORTED) ? viewportPosition : 0.0f, (cachedText.texture.height - sizeToDraw.y), sizeToDraw.x, -sizeToDraw.y };
+			Rectangle sourceRec = {
+				viewX,
+				cachedText.texture.height - sizeToDraw.y - viewY,
+				sizeToDraw.x,
+				-sizeToDraw.y
+			};
 			Rectangle destRec = { RealPos.x + textParams.x, RealPos.y + textParams.y, sizeToDraw.x, sizeToDraw.y };
 			SpecialVector2 origin = { 0, 0 };
 
@@ -2750,20 +2828,20 @@ public:
 			DrawTexturePro(cachedText.texture, sourceRec, destRec, origin, 0, clr);
 		}
 
-		if (Text == "") {
+		if (Text.empty()) {
 			if (CursorVisible and FocusedTextBox == this) {
 				if (textParams.z > 1) {
 					float sizeY = textParams.z;
 					DrawLineEx(
-						{ RealPos.x + getTextOffset(TextAnchor).x * RealSize.x - ((Type == TextBoxType::TEXTBOX_VIEWPORTED) ? viewportPosition : 0), RealPos.y + textParams.y },
-						{ RealPos.x + getTextOffset(TextAnchor).x * RealSize.x - ((Type == TextBoxType::TEXTBOX_VIEWPORTED) ? viewportPosition : 0), RealPos.y + textParams.y + sizeY },
+						{ RealPos.x + getTextOffset(TextAnchor).x * RealSize.x - viewX, RealPos.y + textParams.y - viewY },
+						{ RealPos.x + getTextOffset(TextAnchor).x * RealSize.x - viewX, RealPos.y + textParams.y + sizeY - viewY },
 						CursorSize, CursorColor
 					);
 				}
 			}
 		}
 
-		if (CursorIndex >= 0 and CursorVisible and !Text.empty() and textParams.z > 1) {
+		if (CursorIndex >= 0 and CursorVisible and !Text.empty() and textParams.z > 1) { // NOT OPTIMIZED
 			int bytePos = (CursorIndex < (int)charOffsets.size()) ? charOffsets[CursorIndex] : Text.size();
 
 			int startIndex = CursorIndex;
@@ -2803,16 +2881,14 @@ public:
 			}
 
 			DrawLineEx(
-				{ RealPos.x + textParams.x + size.x + 2 - ((Type == TextBoxType::TEXTBOX_VIEWPORTED) ? viewportPosition : 0), RealPos.y + textParams.y + yOffset },
-				{ RealPos.x + textParams.x + size.x + 2 - ((Type == TextBoxType::TEXTBOX_VIEWPORTED) ? viewportPosition : 0), RealPos.y + textParams.y + yOffset + size.y },
+				{ RealPos.x + textParams.x + size.x - viewX, RealPos.y + textParams.y + yOffset - viewY },
+				{ RealPos.x + textParams.x + size.x - viewX, RealPos.y + textParams.y + yOffset + size.y - viewY },
 				CursorSize, CursorColor
 			);
 		}
 	}
 
 	void inputHandler() {
-		// CURSOR
-
 		if (FocusedTextBox == this and deleteText and ClearOnClick) {
 			Text = "";
 			CursorIndex = 0;
@@ -2823,7 +2899,7 @@ public:
 		CursorTime += dt;
 		if (CursorTime >= CursorCooldown) { CursorVisible = !CursorVisible; CursorTime = 0.0f; }
 
-		if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+		if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT) and CanClick) {
 			if (pointInObject(mousePosition) and FocusedTextBox != this and higherObject == this and ClearOnClick) {
 				Text = "";
 			}
@@ -2834,11 +2910,9 @@ public:
 				else {
 					FocusedTextBox = nullptr;
 				}
-			}
-			else if (not higherObject) {
+			} else if (not higherObject) {
 				FocusedTextBox = nullptr;
-			}
-			else if (pointInObject(mousePosition) and higherObject == this) {
+			} else if (pointInObject(mousePosition) and higherObject == this) {
 				CursorTime = 0.0f;
 				CursorVisible = true;
 				FocusedTextBox = this;
@@ -2864,10 +2938,13 @@ public:
 					textBeforeCursor = !Text;
 				}
 
+				float viewX = (Type == TextBoxType::TEXTBOX_VIEWPORTED_X or Type == TextBoxType::TEXTBOX_VIEWPORTED_XY) ? viewportPosition.x : 0.0f;
+				float viewY = (Type == TextBoxType::TEXTBOX_VIEWPORTED_Y or Type == TextBoxType::TEXTBOX_VIEWPORTED_XY) ? viewportPosition.y : 0.0f;
+
 				float textStartX = RealPos.x + textParams.x;
 				float textStartY = RealPos.y + textParams.y;
-				float clickX = mousePosition.x - textStartX + ((Type == TextBoxType::TEXTBOX_VIEWPORTED) ? viewportPosition : 0.0f);
-				float clickY = mousePosition.y - textStartY + ((Type == TextBoxType::TEXTBOX_VIEWPORTED) ? viewportPosition : 0.0f);
+				float clickX = mousePosition.x - textStartX + viewX;
+				float clickY = mousePosition.y - textStartY + viewY;
 
 				int currentLine = clickY / textParams.z + 1;
 
@@ -2886,7 +2963,7 @@ public:
 							currentL++;
 						}
 					}
-
+					
 					if (currentL == currentLine) {
 						int endIdx = startIdx;
 						while (endIdx < (int)charOffsets.size() and Text[charOffsets[endIdx]] != '\n' and Text[charOffsets[endIdx]] != '\0') {
@@ -2910,14 +2987,14 @@ public:
 								break;
 							}
 						}
+					} else if (currentLine > currentL) {
+						CursorIndex = charOffsets.size();
 					}
 				}
 			}
 		}
 
-		// KEYBOARD INPUT
-
-		if (FocusedTextBox == this and Visible) {
+		if (FocusedTextBox == this and Visible and CanType) {
 			if (maxSymbols >= charOffsets.size() or maxSymbols < 0) {
 				int symbolsLeft = maxSymbols - static_cast<int>(charOffsets.size());
 				int addedSymbols = 0;
@@ -2955,8 +3032,7 @@ public:
 			}
 		}
 
-		// UTILS (BACKSPACE | DEL | CTRL BACKSPACE | ARROWS | CLIPBOARD | ENTER)
-		if (FocusedTextBox == this and Visible) {
+		if (FocusedTextBox == this and Visible and CanType) {
 			if (IsKeyPressed(KEY_BACKSPACE)) {
 				if (IsKeyDown(KEY_LEFT_CONTROL)) {
 					if (CursorIndex > 0) {
@@ -2978,8 +3054,7 @@ public:
 								c == '/' or c == '\\' or c == '\'' or
 								c == '\"' or c == '\n') {
 								start--;
-							}
-							else {
+							} else {
 								while (start > 0) {
 									c = Text[charOffsets[start - 1]];
 
@@ -3001,8 +3076,7 @@ public:
 
 						updateCharOffsets();
 					}
-				}
-				else {
+				} else {
 					if (CursorIndex > 0) {
 						Text = Text.substr(0, charOffsets[CursorIndex - 1]) + Text.substr(charOffsets[CursorIndex]);
 						CursorIndex--;
@@ -3078,8 +3152,7 @@ public:
 
 						CursorIndex++;
 					}
-				}
-				else {
+				} else {
 					CursorIndex++;
 				}
 
@@ -3095,7 +3168,7 @@ public:
 				int symbolsLeft = maxSymbols - static_cast<int>(charOffsets.size());
 
 				if (symbolsLeft > 0 or maxSymbols < 0) {
-					std::string toPaste = clipboardText; // СДЕЛАТЬ ОГРАНИЧЕНИЕ ПО maxSymbols
+					std::string toPaste = clipboardText;
 
 					bool allowed = true;
 					if (ClipboardPasteCondition and !ClipboardPasteCondition(toPaste)) allowed = false;
@@ -3134,6 +3207,158 @@ public:
 					}
 				}
 			}
+
+			if (IsKeyPressed(KEY_UP)) {
+				int s = -1;
+				int s1 = -1;
+				int charI = -1;
+				int charI1 = -1;
+				for (int i = CursorIndex-1; i >= 0; i--) {
+					if (Text[charOffsets[i]] == '\n') {
+						if (s == -1) {
+							s = charOffsets[i + 1];
+							charI = i + 1;
+						} else {
+							s1 = charOffsets[i + 1];
+							charI1 = i + 1;
+							break;
+						}
+					}
+
+					if (i == 0) {
+						if (s == -1) s = 0;
+						if (s1 == -1) s1 = 0;
+					}
+				}
+
+				if (s == -1 or s1 == -1) return;
+
+				std::string textBeforeCursorOnLine = (s == -1 ? "" : Text.substr(s, charOffsets[CursorIndex] - s));
+				std::string textBeforeCursorOnPreviousLine = (s1 == -1 ? "" : Text.substr(s1, ((s - s1 > 0) ? (s - s1 - 1) : 0)));
+				
+				float currentX = MeasureTextEx(getFont(FontFace), textBeforeCursorOnLine.c_str(), textParams.z, Spacing).x;
+
+				int left = charI1;
+				int right = (charI > 0) ? charI - 1 : charI1;
+				int targetCharI = left;
+
+				while (left <= right) {
+					int mid = left + (right - left) / 2;
+					std::string prefix = Text.substr(s1, charOffsets[mid] - s1);
+					float midX = MeasureTextEx(getFont(FontFace), prefix.c_str(), textParams.z, Spacing).x;
+
+					if (midX <= currentX) {
+						targetCharI = mid;
+						left = mid + 1;
+					} else {
+						right = mid - 1;
+					}
+				}
+
+				if (targetCharI < ((charI > 0) ? charI - 1 : charI1)) {
+					std::string prefix1 = Text.substr(s1, charOffsets[targetCharI] - s1);
+					float x1 = MeasureTextEx(getFont(FontFace), prefix1.c_str(), textParams.z, Spacing).x;
+
+					std::string prefix2 = Text.substr(s1, charOffsets[targetCharI + 1] - s1);
+					float x2 = MeasureTextEx(getFont(FontFace), prefix2.c_str(), textParams.z, Spacing).x;
+
+					if ((x2 - currentX) < (currentX - x1)) {
+						targetCharI++;
+					}
+				}
+				if (targetCharI == -1) return;
+				CursorIndex = targetCharI;
+				CursorVisible = true;
+				CursorTime = 0.0f;
+			}
+
+			if (IsKeyPressed(KEY_DOWN)) {
+				int s = -1;
+				int s1 = -1;
+				int s2 = -1;
+				int charI = -1;
+				int charI1 = -1;
+				int charI2 = -1;
+
+				for (int i = CursorIndex - 1; i >= 0; i--) {
+					if (Text[charOffsets[i]] == '\n') {
+						s = charOffsets[i + 1];
+						charI = i + 1;
+						break;
+					}
+				}
+
+				if (s == -1) {
+					s = 0;
+					charI = 0;
+				}
+
+				for (size_t i = CursorIndex; i < charOffsets.size(); i++) {
+					if (charOffsets[i] >= Text.size()) {
+						if (s1 != -1 and s2 == -1) {
+							s2 = Text.size();
+							charI2 = i;
+						}
+						break;
+					}
+
+					if (Text[charOffsets[i]] == '\n') {
+						if (s1 == -1) {
+							s1 = charOffsets[i + 1];
+							charI1 = i + 1;
+						}
+						else {
+							s2 = charOffsets[i];
+							charI2 = i;
+							break;
+						}
+					}
+				}
+
+				if (s1 == -1) return;
+
+				if (s2 == -1) {
+					s2 = Text.size();
+					charI2 = charOffsets.size() - 1;
+				}
+
+				std::string textBeforeCursorOnLine = Text.substr(s, charOffsets[CursorIndex] - s);
+				float currentX = MeasureTextEx(getFont(FontFace), textBeforeCursorOnLine.c_str(), textParams.z, Spacing).x;
+
+				int left = charI1;
+				int right = charI2;
+				int targetCharI = left;
+
+				while (left <= right) {
+					int mid = left + (right - left) / 2;
+					std::string prefix = Text.substr(s1, charOffsets[mid] - s1);
+					float midX = MeasureTextEx(getFont(FontFace), prefix.c_str(), textParams.z, Spacing).x;
+
+					if (midX <= currentX) {
+						targetCharI = mid;
+						left = mid + 1;
+					}
+					else {
+						right = mid - 1;
+					}
+				}
+
+				if (targetCharI < charI2) {
+					std::string prefix1 = Text.substr(s1, charOffsets[targetCharI] - s1);
+					float x1 = MeasureTextEx(getFont(FontFace), prefix1.c_str(), textParams.z, Spacing).x;
+
+					std::string prefix2 = Text.substr(s1, charOffsets[targetCharI + 1] - s1);
+					float x2 = MeasureTextEx(getFont(FontFace), prefix2.c_str(), textParams.z, Spacing).x;
+
+					if ((x2 - currentX) < (currentX - x1)) {
+						targetCharI++;
+					}
+				}
+
+				CursorIndex = targetCharI;
+				CursorVisible = true;
+				CursorTime = 0.0f;
+			}
 		}
 	}
 
@@ -3144,11 +3369,11 @@ public:
 		if (!Visible) { CursorIndex = -1; CursorVisible = false; Text = ""; return; }
 		if (!(FocusedTextBox == this)) { CursorIndex = -1; CursorVisible = false; deleteText = true; }
 
+		inputHandler();
+
+		eventHandler();
 		getRealObject2Dsize();
 		getRealObject2Dposition();
-
-		inputHandler();
-		eventHandler();
 
 		SameUpdate();
 
@@ -3156,30 +3381,55 @@ public:
 			updateChildren(this);
 		}
 
-		if (Type == TextBoxType::TEXTBOX_VIEWPORTED) {
-			if (lastCursorIndex != CursorIndex) {
-				lastCursorIndex = CursorIndex;
+		if (lastCursorIndex != CursorIndex) {
+			bool calcX = (Type == TextBoxType::TEXTBOX_VIEWPORTED_X or Type == TextBoxType::TEXTBOX_VIEWPORTED_XY);
+			bool calcY = (Type == TextBoxType::TEXTBOX_VIEWPORTED_Y or Type == TextBoxType::TEXTBOX_VIEWPORTED_XY);
 
-				if (Text.empty() or CursorIndex == -1) {
-					viewportPosition = 0.0f;
+			if (Text.empty() or CursorIndex == -1) {
+				if (calcX) viewportPosition.x = 0.0f;
+				if (calcY) viewportPosition.y = 0.0f;
+			} else {
+				int s = 0;
+				for (int i = CursorIndex-1; i >= 0; i--) {
+					if (Text[charOffsets[i]] == '\n') {
+						s = charOffsets[i+1];
+						break;
+					}
 				}
-				else {
-					std::string textBeforeCursor = Text.substr(0, charOffsets[CursorIndex]);
-					SpecialVector2 textSize = MeasureTextEx(getFont(!FontFace), textBeforeCursor.c_str(), textParams.z, Spacing);
 
+				std::string textBeforeCursorOnLine = Text.substr(s, charOffsets[CursorIndex]-s);
+				std::string textBeforeCursor = Text.substr(0, charOffsets[CursorIndex]);
+				SpecialVector2 textSizeY = MeasureTextEx(getFont(!FontFace), textBeforeCursor.c_str(), textParams.z, Spacing);
+				SpecialVector2 textSizeX = MeasureTextEx(getFont(!FontFace), textBeforeCursorOnLine.c_str(), textParams.z, Spacing);
+
+				SpecialVector2 textSize = { textSizeX.x, textSizeY.y };
+
+				if (calcX) {
 					float currentX = textSize.x;
 
-					if (currentX - viewportPosition >= RealSize.x) {
-						viewportPosition = currentX - RealSize.x;
+					if (currentX - viewportPosition.x >= RealSize.x) {
+						viewportPosition.x = currentX - RealSize.x;
+					} else if (currentX < viewportPosition.x) {
+						viewportPosition.x = currentX;
 					}
-					else if (currentX < viewportPosition) {
-						viewportPosition = currentX;
-					}
+				}
 
-					if (viewportPosition < 0) viewportPosition = 0;
-					if (viewportPosition > newSize.x) viewportPosition = newSize.x - RealSize.x;
+				if (calcY) {
+					float currentY = textSize.y;
+					if (currentY == 0) {
+						viewportPosition.y = 0;
+					} else {
+						if (currentY - viewportPosition.y >= RealSize.y) {
+							viewportPosition.y = currentY - RealSize.y;
+						}
+						else if (currentY - textParams.z < viewportPosition.y) {
+							viewportPosition.y = currentY - textParams.z;
+						}
+					}
 				}
 			}
+
+			lastCursorIndex = CursorIndex;
 		}
 
 		Draw();
@@ -3265,27 +3515,17 @@ class ImageLabel : public Object2D {
 	constexpr static InstanceType DefaultClass = IMAGELABEL;
 
 	Texture2D tex{};
+	Image imageIfMemory{};
 	std::string currentPair;
-	bool isMemoryLoadedTex = false;
-
-	/* Previous version of ImageLabel textures system
 
 	void updateTexture() {
-		if ((tex.id == 0 or lastId != tex.id) and image.data) {
-			if (tex.id != 0) {
-				UnloadTexture(tex);
-			}
-
-			tex = LoadTextureFromImage(image);
-			lastId = tex.id;
-
+		if ((tex.id == 0) and imageIfMemory.data) {
+			tex = LoadTextureFromImage(imageIfMemory);
 			GenTextureMipmaps(&tex);
 			SetTextureFilter(tex, TEXTURE_FILTER_TRILINEAR);
 			SetTextureWrap(tex, TEXTURE_WRAP_CLAMP);
 		}
 	}
-
-	*/
 public:
 	ImageOverlayFormat Overlay = ImageOverlayFormat::IMAGE_FIT;
 	float ImageTransparency = 0.0f;
@@ -3294,9 +3534,9 @@ public:
 	float Rotation = 0;
 	SpecialVector2 Origin = { 0, 0 };
 
-	void setImage(const std::string& name = "") {
-		if (isMemoryLoadedTex) {
-			isMemoryLoadedTex = false;
+	void setImage(std::string name = "") {
+		if (imageIfMemory.data) {
+			UnloadImage(imageIfMemory);
 			UnloadTexture(tex);
 		}
 
@@ -3316,6 +3556,8 @@ public:
 			return;
 		}
 
+		updateTexture();
+
 		if (tex.id) {
 			Rectangle destRec = { RealPos.x + Origin.x, RealPos.y + Origin.y, RealSize.x, RealSize.y };
 			Rectangle srcRec = { 0, 0, tex.width, tex.height };
@@ -3328,14 +3570,12 @@ public:
 					float scaledHeight = RealSize.x / imageAspect;
 					destRec.y += (RealSize.y - scaledHeight) / 2.0f;
 					destRec.height = scaledHeight;
-				}
-				else {
+				} else {
 					float scaledWidth = RealSize.y * imageAspect;
 					destRec.x += (RealSize.x - scaledWidth) / 2.0f;
 					destRec.width = scaledWidth;
 				}
-			}
-			else if (Overlay == ImageOverlayFormat::IMAGE_CROP) {
+			} else if (Overlay == ImageOverlayFormat::IMAGE_CROP) {
 				float imageAspect = (float)tex.width / tex.height;
 				float rectAspect = RealSize.x / RealSize.y;
 
@@ -3343,8 +3583,7 @@ public:
 					float cropWidth = tex.height * rectAspect;
 					srcRec.x = (tex.width - cropWidth) / 2.0f;
 					srcRec.width = cropWidth;
-				}
-				else {
+				} else {
 					float cropHeight = tex.width / rectAspect;
 					srcRec.y = (tex.height - cropHeight) / 2.0f;
 					srcRec.height = cropHeight;
@@ -3380,30 +3619,26 @@ public:
 				BeginShaderMode(shader);
 				DrawTexturePro(tex, srcRec, destRec, Origin, Rotation, { ImageColor.r, ImageColor.g, ImageColor.b, (unsigned char)(ImageColor.a * (1 - ImageTransparency)) });
 				EndShaderMode();
-			}
-			else {
+			} else {
 				DrawTexturePro(tex, srcRec, destRec, Origin, Rotation, { ImageColor.r, ImageColor.g, ImageColor.b, (unsigned char)(ImageColor.a * (1 - ImageTransparency)) });
 			}
-		}
-		else {
+		} else {
+			if (currentPair == "" or imageIfMemory.data) return;
 			setImage(currentPair);
 		}
 	}
 
-	void UpdateFromMemory(const std::string& type, const std::vector<unsigned char>& data) {
-		Image image = LoadImageFromMemory(type.c_str(), data.data(), data.size());
+	void UpdateImageFromMemory(const std::string& type, const std::vector<unsigned char>& data) {
+		imageIfMemory = LoadImageFromMemory(type.c_str(), data.data(), data.size());
 
-		if (!image.data) {
+		if (!imageIfMemory.data) {
 			std::cout << "UpdateFromMemory FAILED" << std::endl;
+			return;
 		}
 
-		if (tex.id != 0 and isMemoryLoadedTex) UnloadTexture(tex);
+		if (tex.id != 0) UnloadTexture(tex);
 
-		isMemoryLoadedTex = true;
-		tex = LoadTextureFromImage(image);
-		GenTextureMipmaps(&tex);
-		SetTextureFilter(tex, TEXTURE_FILTER_TRILINEAR);
-		SetTextureWrap(tex, TEXTURE_WRAP_CLAMP);
+		tex.id = 0;
 		currentPair = "";
 	}
 
@@ -3415,8 +3650,9 @@ public:
 			c->Clone()->setParent(i);
 		}
 
-		if (isMemoryLoadedTex) {
-			i->isMemoryLoadedTex = false;
+		if (imageIfMemory.data) {
+			Image im{};
+			i->imageIfMemory = im;
 			i->tex.id = 0;
 		}
 
@@ -3429,7 +3665,8 @@ public:
 	ImageLabel() = delete;
 
 	~ImageLabel() {
-		if (tex.id != 0 and isMemoryLoadedTex) UnloadTexture(tex);
+		if (tex.id != 0 and imageIfMemory.data) UnloadTexture(tex);
+		if (imageIfMemory.data) UnloadImage(imageIfMemory);
 	}
 };
 
@@ -3510,8 +3747,7 @@ public:
 			GenTextureMipmaps(&texture);
 			SetTextureFilter(texture, TEXTURE_FILTER_TRILINEAR);
 			UnloadImage(img);
-		}
-		else {
+		} else {
 			imageLoadedWhileNotReady = true;
 		}
 	}
@@ -3547,6 +3783,7 @@ public:
 
 inline void Object2D::PosOrSizeChanged() {
 	sceneDirty = true;
+	this->changedPosOrSizeFrame = true;
 	Instance* scrollChild = getAncestorWhichParentIsScrollFrame(this);
 
 	if (scrollChild) {
@@ -3681,8 +3918,7 @@ inline void Object2D::eventHandler() {
 				if (static_cast<TextLabel*>(this)->Text.isChanged()) {
 					func(this);
 				}
-			}
-			else if (Class == TEXTBOX) {
+			} else if (Class == TEXTBOX) {
 				if (static_cast<TextBox*>(this)->Text.isChanged()) {
 					func(this);
 				}
@@ -3858,6 +4094,10 @@ inline namespace debug {
 	int currentFPSindex = 3;
 	bool lowGraphicsMode = false; // SOON
 
+	int getCurrentMaxFPS() {
+		return typeFPS[currentFPSindex] == 0 ? GetMonitorRefreshRate(GetCurrentMonitor()) : typeFPS[currentFPSindex];
+	}
+
 	Object2D* treeFrame = nullptr;
 	Instance* currentInstance = nullptr;
 
@@ -3874,6 +4114,7 @@ inline namespace debug {
 		TextLabel* lowerName = new TextLabel(debugMenu);
 		lowerName->Name = "debugName";
 		lowerName->SetText("(F2) Debug Menu");
+		lowerName->BackgroundColor = { 0,0,0,255 };
 		lowerName->TextSize = -1;
 		lowerName->TextColor = DefaultDebugColor;
 		lowerName->Position = SpecialVector2{ 0.03f, 0.9f };
@@ -3891,6 +4132,7 @@ inline namespace debug {
 		SettingsFrame->Position = SpecialVector2{ 0.04, 0.03 };
 		SettingsFrame->BackgroundTransparency = 0.2;
 		SettingsFrame->BorderColor = DefaultDebugColor;
+		SettingsFrame->BackgroundColor = { 0,0,0,255 };
 		SettingsFrame->BorderThickness = 3;
 		SettingsFrame->Name = "SettingsFrame";
 
@@ -3904,11 +4146,13 @@ inline namespace debug {
 		SettingsName->Size = SpecialVector2{ 0.8, 0.1 };
 		SettingsName->TextAnchor = TextAnchorEnum::CENTER;
 		SettingsName->BackgroundTransparency = 1;
+		SettingsName->BackgroundColor = { 0,0,0,255 };
 		SettingsName->SetFont(DEBUG_MENU_FONT_NAME);
 
 		TextLabel* AnimLabel = new TextLabel(SettingsFrame);
 		AnimLabel->Size = SpecialVector2{ 0.7, 0.2 };
 		AnimLabel->BackgroundTransparency = 1;
+		AnimLabel->BackgroundColor = { 0,0,0,255 };
 		AnimLabel->Position = SpecialVector2{ 0, 0.1 };
 		AnimLabel->SetText(" Animations");
 		AnimLabel->TextAnchor = TextAnchorEnum::W;
@@ -3934,6 +4178,7 @@ inline namespace debug {
 		TextLabel* LGMlabel = new TextLabel(SettingsFrame);
 		LGMlabel->Size = SpecialVector2{ 0.7, 0.2 };
 		LGMlabel->BackgroundTransparency = 1;
+		LGMlabel->BackgroundColor = { 0,0,0,255 };
 		LGMlabel->Position = SpecialVector2{ 0, 0.3 };
 		LGMlabel->SetText(" Low Graphics Mode");
 		LGMlabel->TextAnchor = TextAnchorEnum::W;
@@ -3959,6 +4204,7 @@ inline namespace debug {
 		TextLabel* FPSlabel = new TextLabel(SettingsFrame);
 		FPSlabel->Size = SpecialVector2{ 0.65, 0.2 };
 		FPSlabel->BackgroundTransparency = 1;
+		FPSlabel->BackgroundColor = { 0,0,0,255 };
 		FPSlabel->Position = SpecialVector2{ 0, 0.5 };
 		FPSlabel->SetText(" FPS mode");
 		FPSlabel->TextAnchor = TextAnchorEnum::W;
@@ -3970,12 +4216,14 @@ inline namespace debug {
 		Object2D* FPSframe = new TextLabel(SettingsFrame);
 		FPSframe->Size = SpecialVector2{ 0.3, 0.2 };
 		FPSframe->BackgroundTransparency = 1;
+		FPSframe->BackgroundColor = { 0,0,0,255 };
 		FPSframe->Roundness = 0.3;
 		FPSframe->Position = SpecialVector2{ 0.7, 0.5 };
 		FPSframe->Name = "FPSlabel";
 		TextLabel* FPSleft = new TextLabel(FPSframe);
 		FPSleft->Size = SpecialVector2{ 0.25, 0.6 };
 		FPSleft->BackgroundTransparency = 1;
+		FPSleft->BackgroundColor = { 0,0,0,255 };
 		FPSleft->Position = SpecialVector2{ 0.0, 0.2 };
 		FPSleft->SetText("<");
 		FPSleft->TextAnchor = TextAnchorEnum::CENTER;
@@ -3988,6 +4236,7 @@ inline namespace debug {
 		TextLabel* FPSquantity = new TextLabel(FPSframe);
 		FPSquantity->Size = SpecialVector2{ 0.5, 1 };
 		FPSquantity->BackgroundTransparency = 1;
+		FPSquantity->BackgroundColor = { 0,0,0,255 };
 		FPSquantity->Position = SpecialVector2{ 0.25, 0 };
 		std::ostringstream st; st << " " << typeFPS[currentFPSindex] << " ";
 		FPSquantity->SetText(currentFPSindex == 2 ? "FULL" : ((currentFPSindex == 3) ? "V-SYNC" : st.str()));
@@ -3998,6 +4247,7 @@ inline namespace debug {
 		TextLabel* FPSright = new TextLabel(FPSframe);
 		FPSright->Size = SpecialVector2{ 0.25, 0.6 };
 		FPSright->BackgroundTransparency = 1;
+		FPSright->BackgroundColor = { 0,0,0,255 };
 		FPSright->Position = SpecialVector2{ 0.75, 0.2 };
 		FPSright->SetText(">");
 		FPSright->TextAnchor = TextAnchorEnum::CENTER;
@@ -4011,6 +4261,7 @@ inline namespace debug {
 		TextLabel* Colorlabel = new TextLabel(SettingsFrame);
 		Colorlabel->Size = SpecialVector2{ 0.65, 0.2 };
 		Colorlabel->BackgroundTransparency = 1;
+		Colorlabel->BackgroundColor = { 0,0,0,255 };
 		Colorlabel->Position = SpecialVector2{ 0, 0.7 };
 		Colorlabel->SetText(" Menu color");
 		Colorlabel->TextAnchor = TextAnchorEnum::W;
@@ -4022,12 +4273,14 @@ inline namespace debug {
 		Object2D* Colorframe = new TextLabel(SettingsFrame);
 		Colorframe->Size = SpecialVector2{ 0.3, 0.2 };
 		Colorframe->BackgroundTransparency = 1;
+		Colorframe->BackgroundColor = { 0,0,0,255 };
 		Colorframe->Roundness = 0.3;
 		Colorframe->Position = SpecialVector2{ 0.7, 0.7 };
 		Colorframe->Name = "Colorframe";
 		TextLabel* Colorleft = new TextLabel(Colorframe);
 		Colorleft->Size = SpecialVector2{ 0.25, 0.6 };
 		Colorleft->BackgroundTransparency = 1;
+		Colorleft->BackgroundColor = { 0,0,0,255 };
 		Colorleft->Position = SpecialVector2{ 0.0, 0.2 };
 		Colorleft->SetText("<");
 		Colorleft->TextAnchor = TextAnchorEnum::CENTER;
@@ -4046,6 +4299,7 @@ inline namespace debug {
 		TextLabel* Colorright = new TextLabel(Colorframe);
 		Colorright->Size = SpecialVector2{ 0.25, 0.6 };
 		Colorright->BackgroundTransparency = 1;
+		Colorright->BackgroundColor = { 0,0,0,255 };
 		Colorright->Position = SpecialVector2{ 0.75, 0.2 };
 		Colorright->SetText(">");
 		Colorright->TextAnchor = TextAnchorEnum::CENTER;
@@ -4064,6 +4318,7 @@ inline namespace debug {
 		LogsFrame->Size = SpecialVector2{ 0.4, 0.6 };
 		LogsFrame->Position = SpecialVector2{ 0.04, 0.3 };
 		LogsFrame->BackgroundTransparency = 0.2;
+		LogsFrame->BackgroundColor = { 0,0,0,255 };
 		LogsFrame->BorderColor = DefaultDebugColor;
 		LogsFrame->BorderThickness = 3;
 		LogsFrame->Name = "LogsFrame";
@@ -4104,6 +4359,7 @@ inline namespace debug {
 		treeFrame->Size = SpecialVector2{ 0.49, 0.87 };
 		treeFrame->Position = SpecialVector2{ 0.47, 0.03 };
 		treeFrame->BackgroundTransparency = 0.2;
+		treeFrame->BackgroundColor = { 0,0,0,255 };
 		treeFrame->BorderColor = DefaultDebugColor;
 		treeFrame->BorderThickness = 3;
 		treeFrame->Name = "treeFrame";
@@ -4192,7 +4448,7 @@ inline namespace debug {
 			}
 		});
 
-		new ChangedSignal<int>(currentFPSindex, [FPSquantity]() { SetTargetFPS((typeFPS[currentFPSindex] == 0) ? GetMonitorRefreshRate(GetCurrentMonitor()) : typeFPS[currentFPSindex]); std::ostringstream s; s << " " << typeFPS[currentFPSindex] << " "; FPSquantity->SetText(currentFPSindex == 2 ? "FULL" : ((currentFPSindex == 3) ? "V-SYNC" : s.str())); });
+		new ChangedSignal<int>(currentFPSindex, [FPSquantity]() { SetTargetFPS(getCurrentMaxFPS()); std::ostringstream s; s << " " << typeFPS[currentFPSindex] << " "; FPSquantity->SetText(currentFPSindex == 2 ? "FULL" : ((currentFPSindex == 3) ? "V-SYNC" : s.str())); });
 		new ChangedSignal<bool>(Animations, [AnimButton]() { AnimButton->BackgroundColor = Animations ? Color{ 204, 255, 204, 255 } : Color{ 255, 204, 204, 255 }; AnimButton->SetText(Animations ? " On " : " Off ");});
 		new ChangedSignal<bool>(lowGraphicsMode, [LGMbutton]() { LGMbutton->BackgroundColor = lowGraphicsMode ? Color{ 204, 255, 204, 255 } : Color{ 255, 204, 204, 255 }; LGMbutton->SetText(lowGraphicsMode ? " On " : " Off "); });
 
@@ -4353,8 +4609,7 @@ void UpdateHigher(Instance* StartInstance) {
 					}
 				}
 			}
-		}
-		else {
+		} else {
 			for (auto it = parent->Children.rbegin(); it != parent->Children.rend(); it++) {
 				Instance* child = *it;
 
@@ -4370,31 +4625,32 @@ void UpdateHigher(Instance* StartInstance) {
 						return true;
 					}
 				}
+				else {
+					auto obj = static_cast<Object2D*>(child);
 
-				auto obj = static_cast<Object2D*>(child);
-
-				if (obj) {
-					if (!obj->Visible) continue;
-					nextDepth = localDepth + 1;
-					if (obj->Active and obj->pointInObject(mousePosition)) {
-						isTarget = true;
+					if (obj) {
+						if (!obj->Visible) continue;
+						nextDepth = localDepth + 1;
+						if (obj->Active and obj->pointInObject(mousePosition)) {
+							isTarget = true;
+						}
 					}
-				}
 
-				if (getTop(child, nextDepth)) {
-					foundInThisBranch = true;
-				}
-
-				if (isTarget) {
-					if (nextDepth > maxDepth or (nextDepth == maxDepth and (!best or obj->ZIndex > best->ZIndex))) {
-						best = obj;
-						maxDepth = nextDepth;
+					if (getTop(child, nextDepth)) {
 						foundInThisBranch = true;
 					}
-				}
 
-				if (foundInThisBranch) {
-					return true;
+					if (isTarget) {
+						if (nextDepth > maxDepth or (nextDepth == maxDepth and (!best or obj->ZIndex > best->ZIndex))) {
+							best = obj;
+							maxDepth = nextDepth;
+							foundInThisBranch = true;
+						}
+					}
+
+					if (foundInThisBranch) {
+						return true;
+					}
 				}
 			}
 		}
@@ -4409,17 +4665,19 @@ void UpdateHigher(Instance* StartInstance) {
 
 void start(Instance& StartInstance, Vector3 inf, const char* name, const char* iconName = "", unsigned int flags = FLAG_WINDOW_RESIZABLE + FLAG_MSAA_4X_HINT) {
 	SetConfigFlags(flags);
-	SetTraceLogLevel(LOG_NONE);
 
 	winWidth = inf.x;
 	winHeight = inf.y;
 
 	InitWindow(inf.x, inf.y, name);
+	
 	if (windowMinimalSize.x != 0 and windowMinimalSize.y != 0) {
 		SetWindowMinSize(windowMinimalSize.x, windowMinimalSize.y);
 	}
+
 	int targetFPS = (inf.z <= 0) ? GetMonitorRefreshRate(GetCurrentMonitor()) : inf.z;
 	SetTargetFPS(targetFPS);
+
 	if (iconName != "") SetWindowIcon(LoadImage(iconName));
 
 	SetExitKey(KEY_NULL);
@@ -4477,7 +4735,7 @@ void start(Instance& StartInstance, Vector3 inf, const char* name, const char* i
 		Animate::UpdateAnimations(dt);
 		Tasks::UpdateTasks(dt);
 
-		if ((previousMousePosition.x != mousePosition.x or previousMousePosition.y != mousePosition.y or sceneDirty)) {
+		if ((previousMousePosition.x != mousePosition.x or previousMousePosition.y != mousePosition.y or sceneDirty) or true) {
 			previousMousePosition = mousePosition;
 			UpdateHigher(&StartInstance);
 		}
